@@ -257,7 +257,40 @@ function splitCsvLine(line) {{
   out.push(cur); return out;
 }}
 
+// A Schwab/thinkorswim "Account Statement" is a multi-section ledger and needs
+// section-aware handling. Every other broker exports a plain trades table --
+// which the section logic would silently reduce to nothing, leaving the visitor
+// staring at a disabled button. So: detect, then branch.
+function isStatement(text) {{
+  const head = text.slice(0, 250000);
+  return /Account Statement for/i.test(text.slice(0, 4000))
+      || /(^|\\n)\\s*Cash Balance\\s*(\\r?\\n)/i.test(head)
+      || /(^|\\n)\\s*Futures Statements\\s*(\\r?\\n)/i.test(head);
+}}
+
+// Plain trades table: keep every data row, blank only the columns that could
+// identify the account. The statistics never read them.
+function redactTable(text) {{
+  const lines = text.split(/\\r?\\n/).filter(l => l.trim().length > 0);
+  const hi = lines.findIndex(l => (l.match(/,/g) || []).length >= 2);
+  const stats = {{account: 0, balances: 0, cash: 0, other: 0}};
+  if (hi < 0) return {{text: '', stats: stats, keptRows: 0}};
+  const header = splitCsvLine(lines[hi]).map(s => s.trim());
+  const dropIdx = header.map((h, i) =>
+    /^account|acct|^ref\\s*#?$|balance/i.test(h) ? i : -1).filter(i => i >= 0);
+  if (dropIdx.length) stats.account = 1;
+  const out = [header.map((h, i) => dropIdx.includes(i) ? '' : h).join(',')];
+  stats.other = hi;                       // preamble lines above the header
+  for (let i = hi + 1; i < lines.length; i++) {{
+    const cells = splitCsvLine(lines[i]);
+    if (cells.length < 2) {{ stats.other++; continue; }}
+    out.push(cells.map((c, j) => dropIdx.includes(j) ? '' : c).join(','));
+  }}
+  return {{text: out.join('\\n'), stats: stats, keptRows: out.length - 1}};
+}}
+
 function redact(text) {{
+  if (!isStatement(text)) return redactTable(text);
   const lines = text.split(/\\r?\\n/);
   const kept = [];
   const stats = {{account: 0, balances: 0, cash: 0, other: 0}};
@@ -320,10 +353,20 @@ fileEl.addEventListener('change', () => {{
     payloadEl.value = r.text;
     const removed = r.stats.balances + r.stats.cash + r.stats.other;
     boxEl.style.display = 'block';
+    if (!r.keptRows) {{
+      // Never leave the visitor with a dead button and no explanation.
+      boxEl.innerHTML =
+        "No trade rows found in that file. It may be an unusual export format &mdash; " +
+        "send it through the <a href=\\"https://docs.google.com/forms/d/e/1FAIpQLSernORkAlZOY47Gnn3kyj4e6VHiOaIET4mUEk72IA4xvC3v9g/viewform\\">intake form</a> and it gets parsed by hand " +
+        "within 48 hours. Unusual formats are exactly what we want to see.";
+      peekEl.style.display = 'none';
+      updateGo();
+      return;
+    }}
     boxEl.innerHTML =
       'Read on your machine &mdash; ready to audit <b>' + r.keptRows.toLocaleString() +
       '</b> trade lines (' + Math.round(r.text.length / 1024).toLocaleString() + ' KB). ' +
-      'The other ' + removed.toLocaleString() + ' lines in your file stayed here. ' +
+      (removed ? 'The other ' + removed.toLocaleString() + ' lines in your file stayed here. ' : '') +
       '<a class="toggle" onclick="peekEl.style.display = peekEl.style.display===\\'block\\'?\\'none\\':\\'block\\'">' +
       'show me exactly what gets sent</a>';
     peekEl.textContent = r.text.slice(0, 4000) + (r.text.length > 4000 ? '\\n… (truncated preview)' : '');
