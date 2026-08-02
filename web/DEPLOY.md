@@ -8,6 +8,17 @@ unconsented POST refused with 400, consented audit returns a full report in
 Free tier sleeps when idle — first request after a quiet spell takes ~50s to
 wake. $7/mo keeps it warm if Reddit traffic makes that annoying.
 
+**Auto-deploy is not reliable here.** The blueprint deployed once and then
+ignored six pushes, including a bug fix. After pushing anything that changes
+the page, check the live URL actually serves it; if not, Dashboard → the
+service → Manual Deploy → "Deploy latest commit".
+
+Verified in-browser 2026-08-02 on the live URL, non-Schwab file (the case that
+was broken): file chosen → "ready to audit 4 trade lines" → button reads "Tick
+the consent box to run" while unticked → ticked → "Run the audit" enabled →
+report returns with the verdict. Both wire formats tested (url-encoded and the
+multipart the real form sends); unconsented POST refused with 400 in both.
+
 To forward consented payloads to the intake inbox, set three env vars on the
 service (Dashboard → Environment). Unset, forwarding disables silently and
 the audit still runs:
