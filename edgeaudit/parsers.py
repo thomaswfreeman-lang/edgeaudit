@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -123,6 +124,8 @@ FUZZY = {
 LONG_WORDS = {"long", "buy", "b", "bot", "bought", "l"}
 SHORT_WORDS = {"short", "sell", "s", "sld", "sold", "sht"}
 ROOT_RE = re.compile(r"^([A-Za-z]{1,4})")
+# futures contract code: optional /, root, month letter, 1-2 digit year, optional :EXCH
+FUT_SYM_RE = re.compile(r"^/?([A-Z0-9]{1,4}?)([FGHJKMNQUVXZ]\d{1,2})(?::[A-Z]+)?$")
 
 
 class ParseError(RuntimeError):
@@ -229,6 +232,358 @@ def _pair_fills_fifo(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# ---------------------------------------------------------------------------
+# thinkorswim / Schwab "Account Statement"
+#
+# Not a table -- a multi-section statement (Cash Balance, Futures Statements,
+# Account Trade History, ...) with different columns per section. The one
+# FormatSpec-per-broker model doesn't fit, so it gets a dedicated pre-parser.
+#
+# We audit the *Futures Statements* section: its fills carry the broker's own
+# realised dollars ("Amount" books realised P&L on the closing fill for
+# outrights, premium flow on every fill for options on futures) plus per-fill
+# fees, so no point-value guessing is needed. Overnight marks arrive as ADJ
+# rows and are folded into the episode that was open at settlement. Equities
+# and equity-option activity (Cash Balance section) is counted and reported,
+# not audited -- mixing investment legs into a futures day-trading record
+# would corrupt the 1R basis silently.
+# ---------------------------------------------------------------------------
+
+_TOS_OUTRIGHT_RE = re.compile(
+    r"^(BOT|SOLD)\s+([+-]?[\d,]+)\s+(/?[A-Z0-9]+(?::[A-Z]+)?)\s+@([\d,.']+)$")
+_TOS_OPTION_RE = re.compile(
+    r"^(BOT|SOLD)\s+([+-]?[\d,]+)\s+(/?[A-Z0-9]+)(?::[A-Z]+)?\s+1/[\d,]+\s+(.*?)"
+    r"(/?[A-Z0-9]+)(?::[A-Z]+)?\s+([\d.]+)\s+(CALL|PUT)\s+@([\d,.]+)$")
+_TOS_ADJ_SYM_RE = re.compile(r"^(/?[A-Z0-9]+)(?::[A-Z]+)?\s+mark to market")
+# expiry date as it appears in fill descriptions ("24 FEB 26") and in
+# removal/exercise rows ("24 Feb 2026")
+_TOS_EXPIRY_RE = re.compile(r"\b(\d{1,2}) ([A-Za-z]{3}) (\d{2,4})\b")
+_TOS_REMOVAL_RE = re.compile(
+    r"^Removal of option due to expiration of (/?[A-Z0-9]+)\s+.*?"
+    r"([\d.]+)\s+(CALL|PUT)$")
+_TOS_EXERCISE_RE = re.compile(
+    r"^Exercise, future settle (-?[\d.]+) of (/?[A-Z0-9]+)\s+.*?"
+    r"([\d.]+)\s+(CALL|PUT)$")
+
+
+def _tos_price(s: str) -> float:
+    """Prices, including CBOT 32nds tick notation: 111'245 = 111 + 24.5/32."""
+    s = str(s).replace(",", "")
+    if "'" in s:
+        whole, frac = s.split("'")
+        ticks = float(frac) / 10.0 if len(frac) >= 3 else float(frac)
+        return float(whole) + ticks / 32.0
+    return float(s)
+
+
+def _tos_expiry_key(text: str) -> str:
+    m = _TOS_EXPIRY_RE.search(text)
+    if not m:
+        return "?"
+    return f"{int(m.group(1)):02d}{m.group(2).upper()}{int(m.group(3)) % 100:02d}"
+
+
+def _tos_option_key(underlying: str, expiry_src: str, strike: str, cp: str) -> str:
+    """Contract identity shared by fills and removal/exercise rows."""
+    return f"{_root(underlying)} {float(strike):g} {cp} {_tos_expiry_key(expiry_src)}"
+_TOS_SECTION_NAMES = (
+    "Cash Balance", "Futures Statements", "Forex Statements",
+    "Account Order History", "Account Trade History", "Equities", "Options",
+    "Futures", "Futures Options", "Profits and Losses", "Account Summary",
+)
+
+
+def _tos_text(source) -> str | None:
+    """Full text if `source` is a thinkorswim Account Statement, else None."""
+    try:
+        if hasattr(source, "read"):
+            text = source.read()
+            if hasattr(source, "seek"):
+                source.seek(0)
+            if isinstance(text, bytes):
+                text = text.decode("utf-8-sig", "replace")
+        elif isinstance(source, (str, Path)) and "\n" not in str(source):
+            p = Path(source)
+            if not p.exists():
+                return None
+            text = p.read_text(encoding="utf-8-sig", errors="replace")
+        else:
+            return None
+    except OSError:
+        return None
+    return text if text.lstrip("﻿ \n").startswith("Account Statement for") else None
+
+
+def _tos_num(s: str) -> float:
+    s = str(s).strip().strip('"').replace(",", "")
+    if s in ("", "--", "N/A"):
+        return np.nan
+    try:
+        return float(s)
+    except ValueError:
+        return np.nan
+
+
+def _tos_sections(text: str) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    cur = "_preamble"
+    out[cur] = []
+    for line in text.splitlines():
+        if line.strip().strip('"') in _TOS_SECTION_NAMES:
+            cur = line.strip().strip('"')
+            out[cur] = []
+        else:
+            out[cur].append(line)
+    return out
+
+
+def _infer_start_position(fills: list[tuple[float, bool]], span: int = 30) -> int:
+    """
+    Starting position for a symbol whose entry may predate the statement.
+
+    Ground truth: an outright fill carries an Amount iff it reduces an open
+    position. Search small integer starting positions and keep the one most
+    consistent with the observed open/close pattern; ties go to the smallest
+    absolute position (0 when nothing contradicts it).
+    """
+    best, best_score = 0, -1
+    for cand in range(-span, span + 1):
+        pos, score = cand, 0
+        for qty, has_amt in fills:
+            closing = pos != 0 and qty * pos < 0
+            if closing == has_amt:
+                score += 1
+            pos += qty
+        if score > best_score or (score == best_score and abs(cand) < abs(best)):
+            best, best_score = cand, score
+    return best
+
+
+def _parse_tos_statement(text: str) -> tuple[pd.DataFrame, dict]:
+    """Round trips from the Futures Statements section, plus a diagnosis dict."""
+    import csv as _csv
+
+    sections = _tos_sections(text)
+    header = text.lstrip("﻿ \n").splitlines()[0]
+    diag: dict = {
+        "format": "thinkorswim (Account Statement, futures section)",
+        "statement": header,
+        "sections": {k: len(v) for k, v in sections.items() if k != "_preamble"},
+        "unparsed_trd": [], "row_types": {}, "fut_adj_excluded": [],
+        "inferred_start_positions": {}, "orphan_adj": 0,
+        "dropped_partial_episodes": {}, "dropped_open_at_eof": {},
+        "outright_fills": 0, "option_fills": 0,
+        "expiration_rows": 0, "exercise_rows": 0, "orphan_removals": 0,
+    }
+    if "Futures Statements" not in sections:
+        raise ParseError(
+            "thinkorswim statement detected but it has no Futures Statements "
+            "section. Only futures activity is audited for now.")
+
+    lines = [l for l in sections["Futures Statements"] if l.strip()]
+    rows = list(_csv.reader(lines))
+    fills: list[dict] = []          # parsed TRD fills, file order
+    adjs: list[dict] = []           # overnight mark-to-market rows
+    for r in rows[1:]:
+        if len(r) < 10:
+            continue
+        typ = r[3].strip()
+        diag["row_types"][typ] = diag["row_types"].get(typ, 0) + 1
+        desc = r[5].strip()
+        if typ == "ADJ":
+            m = _TOS_ADJ_SYM_RE.match(desc)
+            amt = _tos_num(r[8])
+            if m and np.isfinite(amt):
+                adjs.append({"dt": f"{r[1]} {r[2]}", "symbol": m.group(1).split(":")[0],
+                             "amount": amt})
+            continue
+        if typ == "FUT_ADJ":
+            diag["fut_adj_excluded"].append(_tos_num(r[8]))
+            continue
+        if typ != "TRD":
+            continue
+        fees = np.nansum([_tos_num(r[6]), _tos_num(r[7])])
+        amt = _tos_num(r[8])
+        dt = f"{r[1]} {r[2]}"
+        m = _TOS_OUTRIGHT_RE.match(desc)
+        if m:
+            qty = float(m.group(2).replace(",", "").replace("+", ""))
+            fills.append({"dt": dt, "symbol": m.group(3).split(":")[0], "qty": qty,
+                          "price": _tos_price(m.group(4)),
+                          "amount": amt, "fees": fees, "option": False,
+                          "close_all": False})
+            diag["outright_fills"] += 1
+            continue
+        m = _TOS_OPTION_RE.match(desc)
+        if m:
+            qty = float(m.group(2).replace(",", "").replace("+", ""))
+            sym = _tos_option_key(m.group(3), m.group(4), m.group(6), m.group(7))
+            fills.append({"dt": dt, "symbol": sym, "qty": qty,
+                          "price": float(m.group(8).replace(",", "")),
+                          "amount": amt, "fees": fees, "option": True,
+                          "close_all": False})
+            diag["option_fills"] += 1
+            continue
+        m = _TOS_REMOVAL_RE.match(desc)
+        if m:
+            # worthless expiry: closes the whole position at zero. Skipping
+            # these silently deletes losses -- the one bias this tool must
+            # never have.
+            fills.append({"dt": dt,
+                          "symbol": _tos_option_key(m.group(1), desc, m.group(2), m.group(3)),
+                          "qty": 0.0, "price": 0.0, "amount": amt, "fees": fees,
+                          "option": True, "close_all": True})
+            diag["expiration_rows"] += 1
+            continue
+        m = _TOS_EXERCISE_RE.match(desc)
+        if m:
+            opt_delta = float(m.group(1))
+            fills.append({"dt": dt,
+                          "symbol": _tos_option_key(m.group(2), desc, m.group(3), m.group(4)),
+                          "qty": opt_delta, "price": 0.0, "amount": amt,
+                          "fees": fees, "option": True, "close_all": False})
+            # exercising converts the option into the underlying at the
+            # strike: emit the futures opening the broker implies, so the
+            # resulting position closes as a real trade instead of being
+            # dropped as unattributable. Long calls removed -> long futures;
+            # long puts removed -> short futures.
+            fut_qty = -opt_delta if m.group(4) == "CALL" else opt_delta
+            fills.append({"dt": dt, "symbol": m.group(2).split(":")[0],
+                          "qty": fut_qty, "price": float(m.group(3)),
+                          "amount": np.nan, "fees": 0.0, "option": False,
+                          "close_all": False})
+            diag["exercise_rows"] += 1
+            continue
+        diag["unparsed_trd"].append(desc)
+        if np.isfinite(amt):
+            diag["unparsed_amount"] = diag.get("unparsed_amount", 0.0) + amt
+
+    events = pd.DataFrame(fills)
+    if events.empty:
+        raise ParseError("Futures Statements section contained no parseable fills.")
+    events["dt"] = pd.to_datetime(events["dt"], format="%m/%d/%y %H:%M:%S")
+    adj_df = pd.DataFrame(adjs)
+    if not adj_df.empty:
+        adj_df["dt"] = pd.to_datetime(adj_df["dt"], format="%m/%d/%y %H:%M:%S")
+
+    trades: list[dict] = []
+    for sym, g in events.groupby("symbol", sort=False):
+        g = g.sort_values("dt", kind="stable")
+        is_opt = bool(g["option"].iat[0])
+        pos0 = 0
+        if not is_opt:
+            pos0 = _infer_start_position(
+                [(q, np.isfinite(a)) for q, a in zip(g["qty"], g["amount"])])
+            if pos0 != 0:
+                diag["inferred_start_positions"][sym] = pos0
+        sym_adjs = (adj_df[adj_df["symbol"] == sym].sort_values("dt")
+                    if not adj_df.empty else pd.DataFrame())
+        stream = [("fill", r) for r in g.itertuples()]
+        stream += [("adj", r) for r in sym_adjs.itertuples()]
+        stream.sort(key=lambda e: e[1].dt)
+
+        pos, cur = pos0, None
+        for kind, ev in stream:
+            if kind == "adj":
+                if cur is not None:
+                    cur["pnl"] += ev.amount
+                else:
+                    diag["orphan_adj"] += 1
+                continue
+            if ev.close_all:
+                if cur is None or pos == 0:
+                    diag["orphan_removals"] += 1
+                    continue
+                q = -pos
+            else:
+                q = ev.qty
+            first_portion = True
+            while q != 0:
+                if cur is None:
+                    cur = {"partial": pos != 0, "dir": np.sign(q if pos == 0 else pos),
+                           "entry_dt": ev.dt, "exit_dt": ev.dt, "pnl": 0.0,
+                           "fees": 0.0, "peak": abs(pos),
+                           "e_qty": 0.0, "e_px": 0.0, "x_qty": 0.0, "x_px": 0.0}
+                if first_portion:
+                    cur["fees"] += ev.fees if np.isfinite(ev.fees) else 0.0
+                    if np.isfinite(ev.amount):
+                        cur["pnl"] += ev.amount
+                    first_portion = False
+                cur["exit_dt"] = ev.dt
+                if pos == 0 or np.sign(q) == np.sign(pos):     # opening / adding
+                    pos += q
+                    cur["e_qty"] += abs(q)
+                    cur["e_px"] += abs(q) * ev.price
+                    q = 0.0
+                else:                                          # reducing
+                    take = np.sign(q) * min(abs(q), abs(pos))
+                    pos += take
+                    q -= take
+                    cur["x_qty"] += abs(take)
+                    cur["x_px"] += abs(take) * ev.price
+                cur["peak"] = max(cur["peak"], abs(pos))
+                if pos == 0 and cur is not None:
+                    if cur["partial"]:
+                        diag["dropped_partial_episodes"][sym] = \
+                            diag["dropped_partial_episodes"].get(sym, 0) + 1
+                    else:
+                        trades.append({
+                            "symbol": sym, "account": "",
+                            "direction": "long" if cur["dir"] > 0 else "short",
+                            "qty": cur["peak"],
+                            "entry_time": cur["entry_dt"], "exit_time": cur["exit_dt"],
+                            "entry_price": cur["e_px"] / cur["e_qty"] if cur["e_qty"] else np.nan,
+                            "exit_price": cur["x_px"] / cur["x_qty"] if cur["x_qty"] else np.nan,
+                            "gross_pnl": cur["pnl"],
+                            "commission": abs(cur["fees"]),
+                            "net_pnl": cur["pnl"] - abs(cur["fees"]),
+                            "setup": "option" if is_opt else "outright",
+                        })
+                    cur = None
+        if cur is not None:
+            diag["dropped_open_at_eof"][sym] = 1
+
+    out = pd.DataFrame(trades)
+    if out.empty:
+        raise ParseError("No completed round trips found in the futures section.")
+    diag["trades"] = len(out)
+    diag["date_range"] = (str(out["entry_time"].min()), str(out["exit_time"].max()))
+    diag["gross_pnl_sum"] = float(out["gross_pnl"].sum())
+    diag["fees_sum"] = float(out["commission"].sum())
+    diag["net_pnl_sum"] = float(out["net_pnl"].sum())
+    # reconciliation: every dollar in the section is either in a trade,
+    # attributed to a dropped episode, or listed here -- never silently lost
+    parsed_amt = float(np.nansum(events["amount"].to_numpy())) + \
+        (float(adj_df["amount"].sum()) if not adj_df.empty else 0.0)
+    unparsed_amt = float(diag.get("unparsed_amount", 0.0))
+    diag["reconciliation"] = {
+        "section_amount_total": parsed_amt + unparsed_amt,
+        "captured_in_trades": diag["gross_pnl_sum"],
+        "in_dropped_episodes": parsed_amt - diag["gross_pnl_sum"],
+        "in_unparsed_rows": unparsed_amt,
+    }
+    return out, diag
+
+
+def diagnose(source) -> dict:
+    """Parse without auditing; report exactly what was read, used and dropped."""
+    text = _tos_text(source)
+    if text is not None:
+        df, diag = _parse_tos_statement(text)
+        return diag
+    raw = _read(source)
+    raw.columns = [str(c).strip() for c in raw.columns]
+    spec = detect_format(raw)
+    df, fmt = normalize(source)
+    return {
+        "format": fmt, "spec_matched": spec.name if spec else None,
+        "columns_seen": list(raw.columns), "rows_in_file": len(raw),
+        "trades": len(df),
+        "date_range": (str(df["entry_time"].min()), str(df["entry_time"].max())),
+        "net_pnl_sum": float(df["net_pnl"].sum()),
+    }
+
+
 def normalize(source, point_values: dict[str, float] | None = None) -> tuple[pd.DataFrame, str]:
     """
     Returns (canonical dataframe, detected format name).
@@ -239,6 +594,11 @@ def normalize(source, point_values: dict[str, float] | None = None) -> tuple[pd.
     rather than guessed, because a guessed dollar figure in a verification
     report is worse than no figure.
     """
+    text = _tos_text(source)
+    if text is not None:
+        out, _ = _parse_tos_statement(text)
+        return _finish(out, "thinkorswim (Account Statement, futures section)", point_values)
+
     raw = _read(source)
     raw.columns = [str(c).strip() for c in raw.columns]
     spec = detect_format(raw)
@@ -314,6 +674,11 @@ def normalize(source, point_values: dict[str, float] | None = None) -> tuple[pd.
                     raw[col].astype(str).str.replace(r"[$,()]", "", regex=True), errors="coerce")
         fmt_name = "Generic (column-matched)"
 
+    return _finish(out, fmt_name, point_values)
+
+
+def _finish(out: pd.DataFrame, fmt_name: str,
+            point_values: dict[str, float] | None = None) -> tuple[pd.DataFrame, str]:
     for c in CANONICAL:
         if c not in out:
             out[c] = np.nan
@@ -337,8 +702,13 @@ def normalize(source, point_values: dict[str, float] | None = None) -> tuple[pd.
 
 
 def _root(sym) -> str:
-    m = ROOT_RE.match(str(sym).strip().upper())
-    return m.group(1) if m else str(sym)
+    s = str(sym).strip().upper()
+    tok = s.split()[0] if s else s
+    m = FUT_SYM_RE.match(tok)          # "/MNQZ25:XCME" -> MNQ, "SILH26" -> SIL
+    if m:
+        return m.group(1)
+    m = ROOT_RE.match(s)
+    return m.group(1) if m else s
 
 
 def to_r_multiples(df: pd.DataFrame) -> tuple[np.ndarray, str]:

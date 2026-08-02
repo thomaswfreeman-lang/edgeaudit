@@ -68,6 +68,10 @@ library is the moat.
 
 ## Open items
 
+- TOS multi-leg option structures (VERTICAL/BACKRATIO/CUSTOM): a handful of
+  rows per statement, excluded and disclosed in --diagnose reconciliation;
+  proper leg attribution needs an Account Trade History cross-reference
+
 - Day-level loss-concentration aggregation (losses cluster in days;
   per-trade slices miss it)
 - Calendar-month trend option in the report

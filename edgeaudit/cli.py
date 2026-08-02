@@ -15,7 +15,19 @@ def main(argv=None) -> int:
     ap.add_argument("--q", type=float, default=0.10, help="FDR level")
     ap.add_argument("--resamples", type=int, default=4000)
     ap.add_argument("--json", default=None, help="Also write machine-readable summary")
+    ap.add_argument("--diagnose", action="store_true",
+                    help="Parse only: report what was read, used and dropped, then exit")
     a = ap.parse_args(argv)
+
+    if a.diagnose:
+        from . import parsers
+        try:
+            d = parsers.diagnose(a.csv)
+        except Exception as exc:
+            print(f"Could not parse this file: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(d, indent=2, default=str))
+        return 0
 
     try:
         res = audit.run(a.csv, min_bucket_n=a.min_n, fdr_q=a.q, resamples=a.resamples)
