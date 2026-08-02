@@ -127,10 +127,11 @@ pre{{background:var(--card);border:1px solid var(--rule);padding:12px;overflow:a
     a coin flip with the expectancy forced to exactly zero. There is no edge in that data by
     construction.</p>
     <p>A standard journal's "edge finder" reports <span class="num">4 winning setups</span>
-    &mdash; CL overnight <span class="num">+0.54R</span>, GC afternoon
-    <span class="num">+0.54R</span>, Wednesdays <span class="num">+0.36R</span>. All fake.
-    Test 32 slices at p&lt;0.05 with no correction and roughly 2 come back "significant"
-    before any real effect exists.</p>
+    &mdash; GC afternoon <span class="num">+0.54R</span>, ES midday
+    <span class="num">+0.41R</span>, Wednesdays <span class="num">+0.36R</span>. All fake.
+    Test 32 slices at p&lt;0.05 with no correction and you expect about 1.6 "significant"
+    results before any real effect exists. Every figure regenerates from fixed seeds:
+    <a href="https://github.com/thomaswfreeman-lang/edgeaudit">github.com/thomaswfreeman-lang/edgeaudit</a>.</p>
     <p>This engine reports: <strong>4 of 32 look significant, 0 survive. Not established.</strong></p>
   </div>
 
@@ -146,7 +147,14 @@ pre{{background:var(--card);border:1px solid var(--rule);padding:12px;overflow:a
     <div id="redact"></div>
     <div id="peek"></div>
     <button id="go" type="submit" disabled>Choose a file first</button>
+    <p style="font-size:12.5px;color:var(--muted);margin:12px 0 0">By running this you agree:
+    the report describes this sample only, is not investment advice, is not a certification
+    of your account, and does not predict future results. Nothing you upload is stored.</p>
   </form>
+
+  <p style="font-size:14px;margin-top:14px">Prefer a human on the other end &mdash; plus a free
+  re-check on your new trades in 30&ndash;60 days? Use the
+  <a href="https://docs.google.com/forms/d/e/1FAIpQLSernORkAlZOY47Gnn3kyj4e6VHiOaIET4mUEk72IA4xvC3v9g/viewform">audit intake form</a> instead.</p>
 
   <div class="priv">
     <h3>What actually leaves your computer</h3>
@@ -313,5 +321,8 @@ async def run_audit(request: Request, payload: str = "", subject: str = "Account
         res = audit.run(io.BytesIO(text.encode()))
     except Exception as exc:
         return _err(f"Could not read this file: {exc} — make sure it's the raw export from "
-                    f"your broker, not a reformatted copy.", 422)
+                    f"your broker, not a reformatted copy. Or send it through the "
+                    f'<a href="https://docs.google.com/forms/d/e/1FAIpQLSernORkAlZOY47Gnn3kyj4e6VHiOaIET4mUEk72IA4xvC3v9g/viewform">intake form</a> '
+                    f"and a human will parse it within 48 hours — unusual formats are exactly "
+                    f"what we want to see.", 422)
     return HTMLResponse(report.to_html(res, subject=(subject or "Account").strip() or "Account"))
