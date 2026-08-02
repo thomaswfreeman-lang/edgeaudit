@@ -189,11 +189,9 @@ pre{{background:var(--card);border:1px solid var(--rule);padding:12px;overflow:a
       <label style="display:flex;gap:10px;align-items:flex-start;font-family:var(--body);
       font-size:13.5px;letter-spacing:0;text-transform:none;color:var(--ink)">
       <input type="checkbox" id="consent" name="consent" value="yes" style="margin-top:3px">
-      <span>I'm supplying these trade lines so a statistical report can be produced for me.
-      The report describes this sample only, is not investment advice, is not a certification
-      of my account, and does not predict future results. The redacted trade lines may be
-      retained and included in benchmark statistics in anonymised, aggregated form; I can
-      withdraw this by email at any time.</span></label></p>
+      <span>Run the audit on my trade lines. The report describes this sample only and isn't
+      investment advice. My trade lines may be kept for anonymised benchmark statistics &mdash;
+      withdrawable by email any time.</span></label></p>
     <button id="go" type="submit" disabled>Choose a file first</button>
   </form>
 
@@ -202,23 +200,20 @@ pre{{background:var(--card);border:1px solid var(--rule);padding:12px;overflow:a
   <a href="https://docs.google.com/forms/d/e/1FAIpQLSernORkAlZOY47Gnn3kyj4e6VHiOaIET4mUEk72IA4xvC3v9g/viewform">audit intake form</a> instead.</p>
 
   <div class="priv">
-    <h3>What actually leaves your computer</h3>
+    <h3>How your file is handled</h3>
     <ul>
-      <li>Your file is <strong>stripped in your browser before anything is sent</strong>.</li>
-      <li>Removed: account number, every running balance, deposits, withdrawals, bank
-          transfers, dividends, interest, and every row that isn't a trade.</li>
-      <li>Sent: the fill lines only &mdash; side, quantity, instrument, price, fees.
-          They cannot identify you and they do not reveal your account size.</li>
-      <li>With your consent above, those redacted fill lines are retained for benchmark
-          statistics &mdash; anonymised and aggregated, never published individually,
-          withdrawable by email. The unredacted file never leaves your machine.</li>
-      <li>Click <em>show me exactly what gets sent</em> above and check your network tab.
-          Don't take our word for it.</li>
+      <li><strong>Your export stays on your computer.</strong> The page reads it locally and
+          sends only the trade lines the statistics need: instrument, side, size, price,
+          fees, timestamps.</li>
+      <li>Anonymised, aggregated trade lines are kept for benchmark statistics &mdash; that's
+          what lets the report tell you how your record compares. Withdraw any time by email.</li>
+      <li><strong>You can see the exact payload before you send it</strong> &mdash; click
+          <em>show me exactly what gets sent</em> above.</li>
     </ul>
   </div>
 
-  <h2>Or don't upload anything</h2>
-  <p>Same engine, on your own machine, nothing over the wire:</p>
+  <h2>Prefer to run it yourself?</h2>
+  <p>Same engine, on your own machine:</p>
   <pre>pip install -r requirements.txt
 python -m edgeaudit.cli your_export.csv -o report.html</pre>
 
@@ -326,13 +321,9 @@ fileEl.addEventListener('change', () => {{
     const removed = r.stats.balances + r.stats.cash + r.stats.other;
     boxEl.style.display = 'block';
     boxEl.innerHTML =
-      'Redacted in your browser. Removed <b>' + removed.toLocaleString() + '</b> lines — ' +
-      '<b>' + r.stats.cash.toLocaleString() + '</b> cash movements (deposits, withdrawals, transfers, ' +
-      'dividends, interest), <b>' + r.stats.balances.toLocaleString() + '</b> balance rows, ' +
-      '<b>' + r.stats.other.toLocaleString() + '</b> other lines, and your account number. ' +
-      'Sending <b>' + r.keptRows.toLocaleString() + '</b> trade lines ' +
-      '(' + Math.round(r.text.length / 1024).toLocaleString() + ' KB of ' +
-      Math.round(raw.length / 1024).toLocaleString() + ' KB). ' +
+      'Read on your machine &mdash; ready to audit <b>' + r.keptRows.toLocaleString() +
+      '</b> trade lines (' + Math.round(r.text.length / 1024).toLocaleString() + ' KB). ' +
+      'The other ' + removed.toLocaleString() + ' lines in your file stayed here. ' +
       '<a class="toggle" onclick="peekEl.style.display = peekEl.style.display===\\'block\\'?\\'none\\':\\'block\\'">' +
       'show me exactly what gets sent</a>';
     peekEl.textContent = r.text.slice(0, 4000) + (r.text.length > 4000 ? '\\n… (truncated preview)' : '');
