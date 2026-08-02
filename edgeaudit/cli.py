@@ -14,6 +14,9 @@ def main(argv=None) -> int:
     ap.add_argument("--min-n", type=int, default=30, help="Minimum trades to test a slice")
     ap.add_argument("--q", type=float, default=0.10, help="FDR level")
     ap.add_argument("--resamples", type=int, default=4000)
+    ap.add_argument("--roots", default=None,
+                    help="Only audit these instrument roots, comma-separated "
+                         "(e.g. ES,MES,NQ,MNQ). The filter is stated on the report.")
     ap.add_argument("--json", default=None, help="Also write machine-readable summary")
     ap.add_argument("--diagnose", action="store_true",
                     help="Parse only: report what was read, used and dropped, then exit")
@@ -30,7 +33,8 @@ def main(argv=None) -> int:
         return 0
 
     try:
-        res = audit.run(a.csv, min_bucket_n=a.min_n, fdr_q=a.q, resamples=a.resamples)
+        res = audit.run(a.csv, min_bucket_n=a.min_n, fdr_q=a.q, resamples=a.resamples,
+                        roots=a.roots.split(",") if a.roots else None)
     except Exception as exc:
         print(f"Could not audit this file: {exc}", file=sys.stderr)
         return 2

@@ -37,8 +37,17 @@ def run(
     resamples: int = 4000,
     point_values: dict | None = None,
     seed: int = 7,
+    roots: list[str] | None = None,
 ) -> AuditResult:
     df, fmt = parsers.normalize(source, point_values=point_values)
+    if roots:
+        want = {r.strip().upper() for r in roots}
+        df = df[df["root"].isin(want)].reset_index(drop=True)
+        if df.empty:
+            raise parsers.ParseError(
+                f"No trades left after filtering to roots {sorted(want)}.")
+        # the filter is part of the claim being audited -- it must be on the face
+        fmt += f" | filtered to {', '.join(sorted(want))}"
     r, basis = parsers.to_r_multiples(df)
     df = df.assign(r=r)
     n = len(df)

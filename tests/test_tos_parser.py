@@ -100,6 +100,14 @@ def test_exercise_creates_futures_trade_not_dropped_episode(parsed):
     assert "/NQH26" not in diag["dropped_partial_episodes"]
 
 
+def test_roots_filter_scopes_audit_and_is_disclosed():
+    from edgeaudit import audit
+    res = audit.run(FIXTURE, roots=["ES", "MES", "NQ", "MNQ"], resamples=200)
+    assert res.n_trades == 6                     # the GC option is excluded
+    assert set(res.trades["root"]) <= {"ES", "MES", "NQ", "MNQ"}
+    assert "filtered to ES, MES, MNQ, NQ" in res.format_name
+
+
 def test_treasury_tick_prices():
     assert parsers._tos_price("111'240") == pytest.approx(111 + 24.0 / 32)
     assert parsers._tos_price("108'255") == pytest.approx(108 + 25.5 / 32)
