@@ -73,8 +73,15 @@ library is the moat.
   proper leg attribution needs an Account Trade History cross-reference
 
 - Day-level loss-concentration aggregation (losses cluster in days;
-  per-trade slices miss it)
-- Calendar-month trend option in the report
-- Per-instrument-class 1R basis
+  per-trade slices miss it) — partially covered by variance_concentration
+  and drawdown_profile; a per-day bucket dimension is still open
+- Calendar-month trend option in the report (regime_trend splits by count,
+  not calendar)
 - Reproducibility stamp on the report face
-- Intake: form + dedicated email; outcome log starts at audit #1
+- Dedicated intake email (form draft: content/intake-form.md; outcome log
+  live at clients/outcome_log.csv, gitignored)
+
+Done and pinned by tests (do not re-open): per-instrument-class 1R with a
+3x heterogeneity gate (test_r_unit_*); one-closing-decision-one-trade merge
+(test_scale_out_is_one_trade_not_a_run) — both were shipped only after the
+post's reproduction was verified byte-identical.
