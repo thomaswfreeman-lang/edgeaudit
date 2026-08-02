@@ -58,6 +58,10 @@ invariants are pinned in `tests/test_survival.py`.
 
 ## Licensing / distribution
 
+Contact for everything client-facing: **myedgeaudit@gmail.com** (never a
+personal address — it appears in a public repo, a public form and a public
+post). Same address is the app's INTAKE_EMAIL env var on Render.
+
 Dual licence: AGPL-3.0 + commercial (see LICENSE). AGPL is deliberate — a
 competitor embedding the engine in a closed SaaS must open their source or
 pay. Disclosure norms for posts: authorship + commercial exploration stated
