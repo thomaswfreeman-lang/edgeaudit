@@ -834,7 +834,27 @@ def _pair_fills_fifo(df: pd.DataFrame) -> pd.DataFrame:
                     else:
                         fr["gross_pnl"] = fr["gross_pnl"] + adj
             rows.extend(fill_rows)
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    # One closing decision = one trade. A single closing fill that empties
+    # several FIFO lots would otherwise appear as a run of same-sign "trades"
+    # -- and every sequence-based slice (after a loss, trade order in day)
+    # would then be fed each scale-out's own siblings, manufacturing
+    # state-dependence and overstating the independent sample size behind
+    # every q-value.
+    key = ["symbol", "direction", "exit_time"]
+    w = (out["entry_price"] * out["qty"]).groupby(
+        [out[k] for k in key], sort=False, dropna=False).sum()
+    g = out.groupby(key, sort=False, dropna=False)
+    merged = g.agg(
+        account=("account", "first"), venue=("venue", "first"),
+        qty=("qty", "sum"), entry_time=("entry_time", "min"),
+        exit_price=("exit_price", "first"),
+        gross_pnl=("gross_pnl", "sum"), commission=("commission", "sum"),
+    )
+    merged["entry_price"] = (w / merged["qty"]).astype(float)
+    return merged.reset_index()
 
 
 def normalize(source, point_values: dict[str, float] | None = None) -> tuple[pd.DataFrame, str]:
@@ -1008,13 +1028,36 @@ def diagnose(source) -> dict:
     return out
 
 
+_EQ_OPT_RE = re.compile(r"^[A-Z.]+\d{6}[CP][\d.]+$")
+
+
+def _scale_class(sym, venue) -> str:
+    """
+    Risk-scale class for the 1R unit: instrument root plus option-ness.
+    A $5 SLV share loss and a $500 SIL futures loss are not the same risk
+    unit, and an option on NQ is not the same unit as an NQ future.
+    """
+    s = str(sym)
+    kind = "opt" if ("_" in s or _EQ_OPT_RE.match(s)) else "out"
+    root = _futures_root(s) if venue == "futures" else _root(s)
+    return f"{root}|{kind}"
+
+
 def to_r_multiples(df: pd.DataFrame) -> tuple[np.ndarray, str]:
     """
     R-multiples. If the export carries no per-trade risk (almost none do),
     normalise by the median absolute loss -- a robust stand-in for '1R' that
     is unaffected by the few catastrophic trades that would wreck a mean-based
-    scale. The report must say which basis was used; a silent proxy is how
-    other tools quietly become uncomparable across accounts.
+    scale.
+
+    When one record spans materially different risk scales (shares next to
+    full-size futures next to options), a single global unit makes the big
+    book's trades look like +/-40R monsters and the small book's like
+    rounding errors -- so each instrument class with enough losses gets its
+    own unit, and the gate (largest class unit >= 3x the smallest) keeps
+    single-scale records on the one global unit. The report must say which
+    basis was used; a silent proxy is how other tools quietly become
+    uncomparable across accounts.
     """
     pnl = df["net_pnl"].to_numpy(dtype=float)
     losses = np.abs(pnl[pnl < 0])
@@ -1025,5 +1068,20 @@ def to_r_multiples(df: pd.DataFrame) -> tuple[np.ndarray, str]:
         unit = float(np.std(pnl, ddof=1)) if pnl.size > 1 else 1.0
         basis = "P&L standard deviation (too few losses for a loss-based 1R)"
     if not np.isfinite(unit) or unit <= 0:
-        unit, basis = 1.0, "raw P&L (no usable risk scale)"
+        return pnl / 1.0, "raw P&L (no usable risk scale)"
+
+    if "symbol" not in df:
+        return pnl / unit, basis
+    venues = df["venue"] if "venue" in df else pd.Series(np.nan, index=df.index)
+    keys = np.array([_scale_class(s, v) for s, v in zip(df["symbol"], venues)])
+    class_units: dict[str, float] = {}
+    for k in pd.unique(keys):
+        kl = np.abs(pnl[(keys == k) & (pnl < 0)])
+        if kl.size >= 8:                       # enough losses to estimate a unit
+            u = float(np.median(kl))
+            if np.isfinite(u) and u > 0:
+                class_units[k] = u
+    if len(class_units) >= 2 and max(class_units.values()) >= 3.0 * min(class_units.values()):
+        units = np.array([class_units.get(k, unit) for k in keys])
+        return pnl / units, "median absolute loss per instrument class (estimated 1R)"
     return pnl / unit, basis

@@ -130,3 +130,51 @@ def test_futures_root_extraction():
                       ("1OZJ26", "1OZ"), ("/6JH26:XCME", "6J"),
                       ("QGG26", "QG"), ("MHGH26", "MHG")]:
         assert parsers._futures_root(sym) == root, sym
+
+
+def test_scale_out_is_one_trade_not_a_run():
+    """A single closing fill over several FIFO lots is one decision; counting
+    it as a run of same-sign trades manufactures state-dependence in the
+    after-a-loss slices and inflates every sequence q-value."""
+    import pandas as pd
+    fills = pd.DataFrame({
+        "Symbol": ["ESH5"] * 3,
+        "Buy/Sell": ["Buy", "Buy", "Sell"],
+        "Qty": [1, 1, 2],
+        "Price": [5000, 5010, 5030],
+        "Fill Time": pd.date_range("2025-01-02 09:30", periods=3, freq="5min"),
+    })
+    out, _ = parsers.normalize(fills)
+    assert len(out) == 1
+    assert out["qty"].iloc[0] == 2
+    assert out["entry_price"].iloc[0] == pytest.approx(5005.0)   # qty-weighted
+    assert out["net_pnl"].iloc[0] == pytest.approx(50.0)         # 30 + 20 points
+
+
+def test_r_unit_is_per_class_when_scales_differ():
+    """$5 SLV losses and $500 SIL losses must not share one 1R unit."""
+    import numpy as np, pandas as pd
+    rng = np.random.default_rng(0)
+    small = rng.normal(0, 6, 60)
+    big = rng.normal(0, 600, 60)
+    df = pd.DataFrame({
+        "symbol": ["SLV"] * 60 + ["SILH26"] * 60,
+        "venue": ["equity"] * 60 + ["futures"] * 60,
+        "net_pnl": np.r_[small, big],
+    })
+    r, basis = parsers.to_r_multiples(df)
+    assert "per instrument class" in basis
+    med_small = np.median(np.abs(r[:60][r[:60] < 0]))
+    med_big = np.median(np.abs(r[60:][r[60:] < 0]))
+    assert med_small == pytest.approx(1.0, abs=0.01)
+    assert med_big == pytest.approx(1.0, abs=0.01)
+
+
+def test_r_unit_stays_global_on_single_scale_records():
+    """The per-class unit must NOT engage on homogeneous records — the
+    published post's figures are generated from one, and its reproduction
+    is load-bearing."""
+    from edgeaudit import demo_data
+    df, _ = parsers.normalize(demo_data.pure_noise(400, seed=3))
+    _, basis = parsers.to_r_multiples(df)
+    assert basis == "median absolute loss (estimated 1R)"
