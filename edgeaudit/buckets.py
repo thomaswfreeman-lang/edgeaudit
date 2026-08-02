@@ -38,6 +38,15 @@ def build(df: pd.DataFrame, min_n: int = 30) -> list[dict]:
         out.append({"dimension": dim, "label": label, "mask": mask,
                     "n": k, "testable": k >= min_n})
 
+    # Venue first. When one statement covers both a futures and an equity
+    # book, pooling them is the single most misleading thing the tool could
+    # do -- the two have different scales, different cost structures and
+    # often different outcomes entirely. Testing them as slices means a book
+    # that is flat in one and bleeding in the other says so on its face.
+    if "venue" in df and df["venue"].notna().any():
+        for v in df["venue"].dropna().unique():
+            add("Venue", str(v).capitalize(), (df["venue"] == v).to_numpy())
+
     for root, g in df.groupby("root", dropna=True):
         add("Instrument", str(root), (df["root"] == root).to_numpy())
 

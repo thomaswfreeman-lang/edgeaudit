@@ -193,8 +193,10 @@ def shrink_toward_global(
 
 def sharpe_per_trade(x: np.ndarray) -> float:
     x = np.asarray(x, dtype=float)
+    if x.size < 2:
+        return np.nan
     sd = x.std(ddof=1)
-    return float(x.mean() / sd) if sd > 0 and x.size > 1 else np.nan
+    return float(x.mean() / sd) if sd > 0 else np.nan
 
 
 def probabilistic_sharpe(x: np.ndarray, benchmark_sr: float = 0.0) -> float:
@@ -261,6 +263,43 @@ def trades_needed(x: np.ndarray, power: float = 0.80, alpha: float = 0.05) -> fl
     return float(np.ceil((z_a + z_b) ** 2 * sd**2 / eff**2))
 
 
+def variance_concentration(x: np.ndarray) -> dict:
+    """
+    How much of this record rests on how few trades.
+
+    Minimum track record length answers "how many more trades" with a number
+    that, for a book whose outcome is carried by a handful of trades, comes
+    out in the tens of thousands -- technically right and completely useless,
+    because nobody can act on it. The actionable statement of the same fact is
+    that the sample is not really n trades: it is a few trades plus noise.
+
+    `effective_n` is Kish's effective sample size using |P&L| as the weight.
+    A book where every trade contributes equally has effective_n == n; one
+    where a handful of trades dominate has effective_n far below n, and THAT
+    is the number the trader needs to see.
+    """
+    x = np.asarray(x, dtype=float)
+    x = x[np.isfinite(x)]
+    n = x.size
+    out = {"n": n, "effective_n": np.nan, "top1pct_variance_share": np.nan,
+           "top1pct_count": 0, "total_ex_top1pct": np.nan, "total": np.nan}
+    if n < 10:
+        return out
+    a = np.abs(x)
+    if a.sum() <= 0:
+        return out
+    w = a / a.sum()
+    out["effective_n"] = float(1.0 / np.sum(w**2))
+    dev = (x - x.mean()) ** 2
+    k = max(1, int(round(n * 0.01)))
+    idx = np.argsort(-a)[:k]
+    out["top1pct_count"] = int(k)
+    out["top1pct_variance_share"] = float(dev[idx].sum() / dev.sum()) if dev.sum() > 0 else np.nan
+    out["total"] = float(x.sum())
+    out["total_ex_top1pct"] = float(x.sum() - x[idx].sum())
+    return out
+
+
 def detectable_effect(n: int, sd: float, power: float = 0.80, alpha: float = 0.05) -> float:
     """Smallest mean R this sample size could reliably detect."""
     if n < 2 or sd <= 0:
@@ -293,4 +332,94 @@ def independence_check(x: np.ndarray) -> dict:
         (np.isfinite(out["lag1_autocorr"]) and abs(out["lag1_autocorr"]) > 2 / np.sqrt(n))
         or (np.isfinite(out["runs_z"]) and abs(out["runs_z"]) > 1.96)
     )
+    return out
+
+
+# --------------------------------------------------------------------------
+# Reporting-grade descriptives.
+#
+# Everything below exists because running the engine on a real nine-month
+# account showed the verdict alone does not survive contact with a paying
+# customer. They ask three further questions immediately -- how much did this
+# cost me, am I getting better, and how long until I know -- and a report
+# that cannot answer them is a research artefact, not a product.
+# --------------------------------------------------------------------------
+
+def drawdown_profile(pnl: np.ndarray) -> dict:
+    """Realised equity curve shape: peak, trough, worst drawdown, time under water."""
+    x = np.asarray(pnl, dtype=float)
+    x = x[np.isfinite(x)]
+    if x.size == 0:
+        return {}
+    c = np.cumsum(x)
+    peak = np.maximum.accumulate(c)
+    dd = c - peak
+    under = dd < -1e-9
+    longest = cur = 0
+    for u in under:
+        cur = cur + 1 if u else 0
+        longest = max(longest, cur)
+    return {
+        "final": float(c[-1]), "peak": float(peak.max()), "trough": float(c.min()),
+        "max_drawdown": float(dd.min()),
+        # Only meaningful when there was a real peak to give back. If the
+        # worst drawdown exceeds the best cumulative profit ever held, a
+        # "% of peak" reads as 17543% and destroys the reader's trust in
+        # every other number on the page; report the multiple instead.
+        "pct_of_peak_given_back": (
+            float(-dd.min() / peak.max())
+            if peak.max() > 0 and -dd.min() <= peak.max() else np.nan),
+        "drawdown_vs_peak_multiple": (
+            float(-dd.min() / peak.max())
+            if peak.max() > 0 and -dd.min() > peak.max() else np.nan),
+        "never_profitable": bool(peak.max() <= 0),
+        "longest_underwater_trades": int(longest),
+        "pct_of_trades_underwater": float(under.mean()),
+    }
+
+
+def trades_to_detect(sd: float, edges, power: float = 0.80, alpha: float = 0.05) -> dict:
+    """
+    How many trades are needed to establish an edge of a given size, at the
+    trader's own dispersion. n scales with (sd/edge)^2, so this is the number
+    that turns position sizing from a risk question into a learning-rate one.
+    """
+    if not np.isfinite(sd) or sd <= 0:
+        return {}
+    z = (sps.norm.ppf(1 - alpha / 2) + sps.norm.ppf(power)) ** 2
+    return {float(e): float(np.ceil(z * (sd / e) ** 2)) for e in edges if e > 0}
+
+
+def regime_trend(pnl: np.ndarray, order=None, n_parts: int = 3, resamples: int = 4000,
+                 seed: int = 7) -> dict:
+    """
+    Split the record into equal time-ordered parts and test whether the most
+    recent part differs from the earliest. A static verdict over a whole
+    sample hides the only thing a trader actually wants to know: whether the
+    last stretch is different from the first. Reported as a difference with
+    an interval, not as a pair of point estimates to eyeball.
+    """
+    x = np.asarray(pnl, dtype=float)
+    ok = np.isfinite(x)
+    x = x[ok]
+    n = x.size
+    if n < n_parts * 30:
+        return {}
+    if order is not None:
+        x = x[np.argsort(np.asarray(order)[ok], kind="stable")]
+    parts = np.array_split(x, n_parts)
+    out = {"parts": [{"i": i + 1, "n": int(p.size), "total": float(p.sum()),
+                      "mean": float(p.mean())} for i, p in enumerate(parts)]}
+    first, last = parts[0], parts[-1]
+    rng = np.random.default_rng(seed)
+    d = np.empty(resamples)
+    for b in range(resamples):
+        d[b] = (rng.choice(last, last.size, replace=True).mean()
+                - rng.choice(first, first.size, replace=True).mean())
+    lo, hi = np.percentile(d, [2.5, 97.5])
+    out.update({
+        "diff_last_minus_first": float(last.mean() - first.mean()),
+        "diff_lo": float(lo), "diff_hi": float(hi),
+        "improved": bool(lo > 0), "worsened": bool(hi < 0),
+    })
     return out

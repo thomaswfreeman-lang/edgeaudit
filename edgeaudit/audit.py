@@ -27,6 +27,12 @@ class AuditResult:
     n_survived: int = 0
     verdict: str = ""
     verdict_detail: str = ""
+    coverage: dict = field(default_factory=dict)
+    money: dict = field(default_factory=dict)
+    equity_curve: dict = field(default_factory=dict)
+    trend: dict = field(default_factory=dict)
+    forward: dict = field(default_factory=dict)
+    by_class: pd.DataFrame = field(default_factory=pd.DataFrame)
     trades: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
@@ -40,14 +46,28 @@ def run(
     roots: list[str] | None = None,
 ) -> AuditResult:
     df, fmt = parsers.normalize(source, point_values=point_values)
+    _at = dict(getattr(df, "attrs", {}) or {})
     if roots:
-        want = {r.strip().upper() for r in roots}
+        want = {x.strip().upper() for x in roots}
         df = df[df["root"].isin(want)].reset_index(drop=True)
         if df.empty:
             raise parsers.ParseError(
                 f"No trades left after filtering to roots {sorted(want)}.")
         # the filter is part of the claim being audited -- it must be on the face
         fmt += f" | filtered to {', '.join(sorted(want))}"
+    _ledger = _at.get("futures_ledger_total", np.nan)
+    # like-for-like: the ledger total is the futures section's own realised
+    # dollars gross of fees, so it is compared against captured futures GROSS
+    _fut_gross = float(df.loc[df["venue"] == "futures", "gross_pnl"].sum()) \
+        if ("venue" in df and len(df)) else (float(df["gross_pnl"].sum()) if len(df) else np.nan)
+    coverage = {
+        "ledger_total": _ledger,
+        "accounted": _fut_gross,
+        "excluded_contracts": _at.get("excluded_contracts", 0),
+        "skipped_spread_orders": _at.get("skipped_spread_orders", 0),
+        "unmatched_futures_rows": _at.get("unmatched_futures_rows", 0),
+        "roots_filter": sorted({x.strip().upper() for x in roots}) if roots else None,
+    }
     r, basis = parsers.to_r_multiples(df)
     df = df.assign(r=r)
     n = len(df)
@@ -71,12 +91,61 @@ def run(
         "trades_needed_80pct": st.trades_needed(r),
         "detectable_effect_r": st.detectable_effect(n, float(np.std(r, ddof=1)) if n > 1 else np.nan),
         "shortfall": None,
+        "concentration": st.variance_concentration(r),
     }
+    # When the required sample is an order of magnitude beyond what the trader
+    # has, quoting it is worse than useless -- it reads as "this tool is
+    # broken" rather than "your outcome rests on a handful of trades". Flag it
+    # so the report substitutes the concentration diagnosis instead.
+    _mtrl = adequacy["min_track_record"]
+    adequacy["mtrl_uninformative"] = bool(np.isfinite(_mtrl) and _mtrl > 10 * n)
     for k in ("min_track_record", "trades_needed_80pct"):
         v = adequacy[k]
         if np.isfinite(v) and v > n:
             adequacy["shortfall"] = int(np.ceil(v - n))
             break
+
+    # ---- reporting-grade descriptives -------------------------------------
+    d = df["net_pnl"].to_numpy(dtype=float)
+    fees = float(df["commission"].fillna(0).abs().sum())
+    money = {
+        "net": float(d.sum()), "per_trade": float(d.mean()),
+        "sd_per_trade": float(d.std(ddof=1)) if n > 1 else np.nan,
+        "gross_win": float(d[d > 0].sum()), "gross_loss": float(d[d < 0].sum()),
+        "avg_win": float(d[d > 0].mean()) if (d > 0).any() else np.nan,
+        "avg_loss": float(d[d < 0].mean()) if (d < 0).any() else np.nan,
+        "fees": fees,
+        "fees_pct_of_result": float(fees / abs(d.sum())) if abs(d.sum()) > 0 else np.nan,
+        "biggest_win": float(d.max()), "biggest_loss": float(d.min()),
+    }
+    if np.isfinite(money["avg_win"]) and np.isfinite(money["avg_loss"]):
+        w, l = money["avg_win"], abs(money["avg_loss"])
+        money["payoff_ratio"] = float(w / l) if l > 0 else np.nan
+        money["breakeven_win_rate"] = float(l / (w + l)) if (w + l) > 0 else np.nan
+        money["win_rate_gap"] = float(global_stats["win_rate"] - money["breakeven_win_rate"])
+
+    order = df["exit_time"].fillna(df["entry_time"])
+    seq = d[np.argsort(order.to_numpy(), kind="stable")] if order.notna().any() else d
+    equity_curve = st.drawdown_profile(seq)
+    trend = st.regime_trend(d, order=order.to_numpy() if order.notna().any() else None,
+                            resamples=min(resamples, 2000), seed=seed)
+    # Trades needed to establish an edge, at THIS trader's own dispersion.
+    sd_d = money["sd_per_trade"]
+    forward = {"sd": sd_d,
+               "table": st.trades_to_detect(sd_d, [sd_d / 20, sd_d / 10, sd_d / 5, sd_d / 2])}
+
+    by_class = pd.DataFrame()
+    key = "venue" if ("venue" in df and df["venue"].notna().any()) else None
+    if key:
+        by_class = (df.groupby(key)["net_pnl"]
+                      .agg(trades="size", total="sum", per_trade="mean", sd="std")
+                      .reset_index().rename(columns={key: "class"}))
+        by_class["win_rate"] = df.groupby(key)["net_pnl"].apply(lambda s: (s > 0).mean()).values
+        lo_hi = [st.bootstrap_mean(g["net_pnl"].to_numpy(float), resamples=min(resamples, 2000), seed=seed)
+                 for _, g in df.groupby(key)]
+        by_class["ci_lo"] = [b["lo"] for b in lo_hi]
+        by_class["ci_hi"] = [b["hi"] for b in lo_hi]
+        by_class = by_class.sort_values("total")
 
     cands = bkt.build(df, min_n=min_bucket_n)
     rows = []
@@ -128,7 +197,9 @@ def run(
         independence=st.independence_check(r),
         buckets=b, family_size=family,
         n_naive_significant=n_naive, n_survived=n_surv,
-        verdict=verdict, verdict_detail=detail, trades=df,
+        verdict=verdict, verdict_detail=detail, coverage=coverage,
+        money=money, equity_curve=equity_curve, trend=trend, forward=forward,
+        by_class=by_class, trades=df,
     )
 
 

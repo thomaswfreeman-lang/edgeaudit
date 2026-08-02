@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Statement Redactor — strips your broker export before you share it</title>
+<style>
+:root{--paper:#E9EDEF;--card:#F6F8F9;--surface:#FCFCFB;--ink:#101619;--muted:#667279;
+ --rule:#C6D0D5;--good:#0E6BA8;--warn:#B03A26;
+ --display:"Charter","Iowan Old Style",Palatino,Georgia,serif;
+ --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+ --body:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);font-size:16px;
+ line-height:1.62;-webkit-font-smoothing:antialiased}
+.sheet{max-width:660px;margin:0 auto;padding:52px 22px 80px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+h1{font-family:var(--display);font-size:34px;line-height:1.14;margin:8px 0 12px;font-weight:600}
+h2{font-family:var(--display);font-size:19px;margin:34px 0 4px}
+p{max-width:60ch}
+.off{border:1px solid var(--good);background:var(--surface);padding:14px 16px;margin:20px 0;font-size:14.5px}
+.off b{color:var(--good)}
+.drop{background:var(--card);border:2px dashed var(--rule);padding:34px 22px;text-align:center;margin-top:16px}
+.drop.over{border-color:var(--ink);background:var(--surface)}
+input[type=file]{font-size:14px}
+button{background:var(--ink);color:#fff;border:none;padding:13px 22px;font-size:15px;cursor:pointer;margin-top:6px}
+button:disabled{opacity:.4;cursor:not-allowed}
+#out{display:none;margin-top:18px;padding:16px 18px;background:var(--surface);border:1px solid var(--rule);font-size:14.5px}
+#out b{font-family:var(--mono)}
+#peek{display:none;margin-top:12px;max-height:230px;overflow:auto;background:#fff;border:1px solid var(--rule);
+ padding:10px;font-family:var(--mono);font-size:11px;white-space:pre}
+a.t{color:var(--muted);cursor:pointer;text-decoration:underline;font-size:13.5px}
+ul{max-width:60ch;font-size:15px} li{margin:5px 0}
+.fine{font-size:13px;color:var(--muted);margin-top:26px}
+</style></head><body>
+<div class="sheet">
+<span class="eyebrow">Runs entirely on your machine</span>
+<h1>Strip your broker statement before you share it</h1>
+<p>A Schwab/thinkorswim statement contains far more than your trades: your account number,
+every running cash balance, deposits, withdrawals, bank transfers, dividends and interest.
+Nobody analysing your trading needs any of that.</p>
+
+<div class="off">
+  <b>This page has no server.</b> There is no upload, no network request, no analytics, nothing
+  stored. Your file is read by your own browser, stripped there, and handed back to you as a
+  download. You can disconnect from the internet, and it will still work. View source &mdash;
+  it's one file and about a hundred lines.
+</div>
+
+<div class="drop" id="drop">
+  <input type="file" id="file" accept=".csv,text/csv">
+  <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted)">or drag a .csv here</p>
+</div>
+<div id="out"></div>
+<div id="peek"></div>
+<button id="dl" disabled>Download the stripped file</button>
+
+<h2>What gets removed</h2>
+<ul>
+  <li>Your account number</li>
+  <li>Every running balance column &mdash; this is what reveals account size</li>
+  <li>The cash-flow column in the equity ledger</li>
+  <li>Broker order reference numbers</li>
+  <li>Every non-trade row: deposits, withdrawals, bank transfers, dividends, interest,
+      cash sweeps, daily balances</li>
+  <li>Every section that isn't trades: Order History, Positions, Account Summary</li>
+</ul>
+<h2>What's left</h2>
+<p>The fill lines only &mdash; side, quantity, instrument, price, fees. Enough to analyse how you
+trade, not enough to identify you or size your account.</p>
+
+<p class="fine">Built for Schwab/thinkorswim combined account statements. Other broker exports
+pass through mostly unchanged, since they rarely contain balance or transfer data in the first
+place &mdash; check the preview before you send anything.</p>
+</div>
+<script>
+const KEEP_TYPES = new Set(["TRD", "RAD"]);
+
+
+
+
+
+
+function splitCsvLine(line) {
+  const out = []; let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { q = !q; cur += c; }
+    else if (c === ',' && !q) { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur); return out;
+}
+
+function redact(text) {
+  const lines = text.split(/\r?\n/);
+  const kept = [];
+  const stats = {account: 0, balances: 0, cash: 0, other: 0};
+  let section = null, header = null, typeIdx = -1, dropIdx = [];
+
+  for (const raw of lines) {
+    const line = raw.replace(/^\uFEFF/, '');
+    const t = line.trim();
+
+    if (/^Account Statement for/i.test(t)) {
+      stats.account++;
+      kept.push(t.replace(/for\s+\S+/i, 'for [REDACTED]'));
+      continue;
+    }
+    if (t === 'Cash Balance' || t === 'Futures Statements') {
+      section = t; kept.push(t); header = null; continue;
+    }
+    // sections the engine never reads
+    if (/^(Account Order History|Account Trade History|Profits and Losses|Account Summary|Options|Futures Options|Forex Statements|Crypto)/i.test(t)) {
+      section = 'skip'; stats.other++; continue;
+    }
+    if (!t) { if (section && section !== 'skip') kept.push(''); continue; }
+    if (section === 'skip') { stats.other++; continue; }
+    if (!section) { stats.other++; continue; }
+
+    if (header === null && /^(DATE,TIME,TYPE|Trade Date,)/i.test(t)) {
+      header = splitCsvLine(t).map(s => s.trim());
+      typeIdx = header.findIndex(h => /^type$/i.test(h));
+      // Drop running balances everywhere (reveals account size), the AMOUNT
+      // column in the equity ledger (the engine derives P&L from prices there),
+      // and broker order reference numbers (never read, needlessly correlatable).
+      dropIdx = header.map((h, i) =>
+        /^ref\s*#?$/i.test(h) ? i
+        : /^balance$/i.test(h) ? i
+        : (/^amount$/i.test(h) && section === 'Cash Balance') ? i : -1).filter(i => i >= 0);
+      kept.push(header.map((h, i) => dropIdx.includes(i) ? '' : h).join(','));
+      continue;
+    }
+    if (header === null) { stats.other++; continue; }
+
+    const cells = splitCsvLine(t);
+    const ty = (cells[typeIdx] || '').trim().toUpperCase();
+    if (!KEEP_TYPES.has(ty)) {
+      if (ty === 'BAL') stats.balances++; else stats.cash++;
+      continue;
+    }
+    kept.push(cells.map((c, i) => dropIdx.includes(i) ? '' : c).join(','));
+  }
+  return {text: kept.join('\n'), stats: stats, keptRows: kept.length};
+}
+
+
+const fileEl=document.getElementById('file'), dlEl=document.getElementById('dl'),
+      outEl=document.getElementById('out'), peekEl=document.getElementById('peek'),
+      dropEl=document.getElementById('drop');
+let clean='', name='redacted.csv';
+function handle(f){
+  name = f.name.replace(/\.csv$/i,'') + '_redacted.csv';
+  const rd=new FileReader();
+  rd.onload=()=>{
+    const raw=String(rd.result), r=redact(raw); clean=r.text;
+    const removed=r.stats.balances+r.stats.cash+r.stats.other;
+    outEl.style.display='block';
+    outEl.innerHTML='Stripped on your machine. Removed <b>'+removed.toLocaleString()+'</b> lines — '+
+      '<b>'+r.stats.cash.toLocaleString()+'</b> cash movements, <b>'+r.stats.balances.toLocaleString()+
+      '</b> balance rows, <b>'+r.stats.other.toLocaleString()+'</b> other lines, and your account number. '+
+      'Kept <b>'+r.keptRows.toLocaleString()+'</b> trade lines ('+Math.round(clean.length/1024).toLocaleString()+
+      ' KB of '+Math.round(raw.length/1024).toLocaleString()+' KB). '+
+      '<a class="t" id="tog">show me what\u2019s left</a>';
+    peekEl.textContent=clean.slice(0,5000)+(clean.length>5000?'\n… (preview truncated)':'');
+    document.getElementById('tog').onclick=()=>{peekEl.style.display=peekEl.style.display==='block'?'none':'block';};
+    dlEl.disabled=false;
+  };
+  rd.readAsText(f);
+}
+fileEl.addEventListener('change',()=>{ if(fileEl.files[0]) handle(fileEl.files[0]); });
+['dragenter','dragover'].forEach(e=>dropEl.addEventListener(e,ev=>{ev.preventDefault();dropEl.classList.add('over');}));
+['dragleave','drop'].forEach(e=>dropEl.addEventListener(e,ev=>{ev.preventDefault();dropEl.classList.remove('over');}));
+dropEl.addEventListener('drop',ev=>{ const f=ev.dataTransfer.files[0]; if(f) handle(f); });
+dlEl.addEventListener('click',()=>{
+  const b=new Blob([clean],{type:'text/csv'}), u=URL.createObjectURL(b);
+  const a=document.createElement('a'); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u);
+});
+</script></body></html>

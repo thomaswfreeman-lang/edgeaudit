@@ -1,53 +1,54 @@
 """
-thinkorswim Account Statement parser regressions.
+Schwab/thinkorswim futures-section regressions against a small anonymised
+fixture with hand-computed P&L. Every quirk found in a real 83k-line Schwab
+statement is pinned here:
 
-Every quirk found in a real Schwab/TOS export is pinned here against a small
-anonymised fixture with hand-computed P&L:
-
-- Amount books realised P&L on the closing fill for outrights, premium flow
-  on every fill for options on futures
-- overnight ADJ mark-to-market rows belong to the episode open at settlement
-- positions opened before the statement window are inferred and their
-  (unattributable) episodes dropped, not guessed
-- positions still open at end of file are dropped, not counted as winners
-- FUT_ADJ account-level adjustments are excluded and reported
-- unparseable TRD descriptions are reported, never silently skipped
+- overnight ADJ mark-to-market rows belong to the position open at settlement
+- positions opened before the statement window are inferred from the
+  open/close pattern and their round trips dropped, never guessed at
+- exercises close the option and synthesise the implied futures at the strike
+  (skipping them mispairs the underlying AND deletes the premium loss)
+- worthless expirations close the whole position at zero
+- CBOT 32nds tick prices (/ZN 111'240) parse
+- net is ALWAYS gross minus both fills' fees, broker realised is gross
+- the reconciliation accounts for every ledger dollar: captured + dropped +
+  unmatched = section total
 """
 
 from pathlib import Path
 
 import pytest
 
-from edgeaudit import parsers
+from edgeaudit import audit, parsers
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "tos_statement_small.csv")
 
 
 @pytest.fixture(scope="module")
 def parsed():
-    text = parsers._tos_text(FIXTURE)
-    assert text is not None, "fixture not recognised as a TOS statement"
-    return parsers._parse_tos_statement(text)
-
-
-def test_detected_via_normalize():
     df, fmt = parsers.normalize(FIXTURE)
-    assert fmt.startswith("thinkorswim")
+    assert fmt.startswith("Schwab / thinkorswim")
+    return df, parsers.diagnose(FIXTURE)
+
+
+def test_trade_count(parsed):
+    df, _ = parsed
     assert len(df) == 7
 
 
-def test_simple_round_trip(parsed):
+def test_simple_round_trip_fees_in_and_out(parsed):
     df, _ = parsed
-    t = df[df["symbol"] == "/MNQZ25"].iloc[0]
+    t = df[df["symbol"] == "MNQZ25"].iloc[0]
     assert t["direction"] == "long"
     assert t["qty"] == 2
-    assert t["gross_pnl"] == pytest.approx(40.0)
-    assert t["net_pnl"] == pytest.approx(40.0 - 9.60)  # both fills' fees
+    assert t["gross_pnl"] == pytest.approx(40.0)          # broker's dollars
+    assert t["commission"] == pytest.approx(9.60)         # open 4.80 + close 4.80
+    assert t["net_pnl"] == pytest.approx(40.0 - 9.60)
 
 
-def test_overnight_adj_folded_into_episode(parsed):
+def test_overnight_adj_folded_into_trade(parsed):
     df, _ = parsed
-    t = df[df["symbol"] == "/MESZ25"].iloc[0]
+    t = df[df["symbol"] == "MESZ25"].iloc[0]
     assert t["direction"] == "short"
     # -50 settlement mark + 25 on the close = -25 gross (6900 -> 6905 short)
     assert t["gross_pnl"] == pytest.approx(-25.0)
@@ -56,95 +57,76 @@ def test_overnight_adj_folded_into_episode(parsed):
 
 def test_pre_window_position_inferred_and_dropped(parsed):
     df, diag = parsed
-    # first /ES fill closes a long opened before the statement window
-    assert diag["inferred_start_positions"] == {"/ESZ25": 1}
-    assert diag["dropped_partial_episodes"] == {"/ESZ25": 1}
-    # the in-window /ES round trip is kept and correct
-    t = df[df["symbol"] == "/ESZ25"].iloc[0]
+    assert diag["inferred_start_positions"] == {"ESZ25": 1.0}
+    assert diag["dropped_prewindow_trades"] == 1
+    t = df[df["symbol"] == "ESZ25"].iloc[0]            # the in-window trade
     assert t["gross_pnl"] == pytest.approx(300.0)
     assert t["entry_price"] == pytest.approx(6795.0)
 
 
-def test_option_round_trip_premium_flow(parsed):
+def test_option_round_trip_priced_by_multiplier(parsed):
     df, _ = parsed
-    t = df[df["symbol"].str.startswith("GC ")].iloc[0]
-    assert parsers._root(t["symbol"]) == "GC"
-    assert t["gross_pnl"] == pytest.approx(250.0)     # -1000 + 1250
+    t = df[df["symbol"].str.startswith("GCJ26_")].iloc[0]
+    assert t["root"] == "GC"
+    assert t["gross_pnl"] == pytest.approx(250.0)         # (12.50-10.00) x 100
     assert t["net_pnl"] == pytest.approx(250.0 - 4.84)
 
 
 def test_expired_option_counted_as_loss(parsed):
-    # bought 2 calls for $500 premium, expired worthless: the loss must be a
-    # trade, not a dropped open position
-    df, diag = parsed
-    assert diag["expiration_rows"] == 1
-    t = df[df["symbol"] == "ES 7000 CALL 07JAN26"].iloc[0]
+    df, _ = parsed
+    t = df[df["symbol"].str.startswith("ESM26_")].iloc[0]
     assert t["direction"] == "long"
-    assert t["gross_pnl"] == pytest.approx(-500.0)
+    assert t["gross_pnl"] == pytest.approx(-500.0)        # 2 x 5.00 x 50 premium
     assert t["net_pnl"] == pytest.approx(-500.0 - 2.42)
-    assert "ES 7000 CALL 07JAN26" not in diag["dropped_open_at_eof"]
 
 
-def test_exercise_creates_futures_trade_not_dropped_episode(parsed):
-    # long call exercised: option episode closes at -premium, and the
-    # resulting futures position must become a real trade at the strike --
-    # dropping it deletes the winning half of every exercised call
+def test_exercise_closes_option_and_creates_futures_trade(parsed):
     df, diag = parsed
-    assert diag["exercise_rows"] == 1
-    opt = df[df["symbol"] == "NQ 24000 CALL 07JAN26"].iloc[0]
-    assert opt["gross_pnl"] == pytest.approx(-200.0)          # premium lost
-    fut = df[df["symbol"] == "/NQH26"].iloc[0]
+    opt = df[df["symbol"].str.startswith("NQH26_")].iloc[0]
+    assert opt["gross_pnl"] == pytest.approx(-200.0)      # premium lost at exercise
+    fut = df[df["symbol"] == "NQH26"].iloc[0]
     assert fut["direction"] == "long"
-    assert fut["entry_price"] == pytest.approx(24000.0)       # the strike
-    assert fut["gross_pnl"] == pytest.approx(200.0)           # 24000 -> 24010
-    assert "/NQH26" not in diag["dropped_partial_episodes"]
-
-
-def test_roots_filter_scopes_audit_and_is_disclosed():
-    from edgeaudit import audit
-    res = audit.run(FIXTURE, roots=["ES", "MES", "NQ", "MNQ"], resamples=200)
-    assert res.n_trades == 6                     # the GC option is excluded
-    assert set(res.trades["root"]) <= {"ES", "MES", "NQ", "MNQ"}
-    assert "filtered to ES, MES, MNQ, NQ" in res.format_name
-
-
-def test_treasury_tick_prices():
-    assert parsers._tos_price("111'240") == pytest.approx(111 + 24.0 / 32)
-    assert parsers._tos_price("108'255") == pytest.approx(108 + 25.5 / 32)
-    assert parsers._tos_price("6,878.75") == pytest.approx(6878.75)
+    assert fut["entry_price"] == pytest.approx(24000.0)   # the strike
+    assert fut["gross_pnl"] == pytest.approx(200.0)       # broker realised on close
+    # and the synthesised entry must not trip the pre-window inference
+    assert "NQH26" not in diag["inferred_start_positions"]
 
 
 def test_open_at_eof_dropped_not_counted(parsed):
-    df, diag = parsed
-    assert "/MGCG26" not in set(df["symbol"])
-    assert diag["dropped_open_at_eof"] == {"/MGCG26": 1}
-
-
-def test_fut_adj_excluded_and_reported(parsed):
-    _, diag = parsed
-    assert diag["fut_adj_excluded"] == [500.0]
-
-
-def test_unparsed_descriptions_reported(parsed):
-    _, diag = parsed
-    # the EFP row and the informational "Opening futures position" notice
-    # (the position itself is synthesised from the Exercise row)
-    assert len(diag["unparsed_trd"]) == 2
-    assert any("EXCHANGE FOR PHYSICAL" in d for d in diag["unparsed_trd"])
-    assert any("Opening futures position" in d for d in diag["unparsed_trd"])
+    df, _ = parsed
+    assert not df["symbol"].eq("MGCG26").any()
 
 
 def test_reconciliation_accounts_for_every_dollar(parsed):
     df, diag = parsed
     r = diag["reconciliation"]
-    assert r["section_amount_total"] == pytest.approx(
-        r["captured_in_trades"] + r["in_dropped_episodes"] + r["in_unparsed_rows"])
-    assert r["in_dropped_episodes"] == pytest.approx(100.0)   # pre-window close
-    assert r["in_unparsed_rows"] == pytest.approx(12.34)      # the EFP row
+    captured = float(df.loc[df["venue"] == "futures", "gross_pnl"].sum())
+    assert r["captured_futures_gross"] == pytest.approx(captured)
+    # unaccounted = the pre-window close (+100) + the unparsed EFP row (+12.34)
+    assert r["unaccounted"] == pytest.approx(100.0 + 12.34)
+
+
+def test_unmatched_rows_counted(parsed):
+    _, diag = parsed
+    # the EFP row and the informational "Opening futures position" notice
+    assert diag["unmatched_futures_rows"] == 2
+
+
+def test_roots_filter_scopes_audit_and_is_disclosed():
+    res = audit.run(FIXTURE, roots=["ES", "MES", "NQ", "MNQ"], resamples=200)
+    assert res.n_trades == 6                              # the GC option is excluded
+    assert set(res.trades["root"]) <= {"ES", "MES", "NQ", "MNQ"}
+    assert "filtered to ES, MES, MNQ, NQ" in res.format_name
+
+
+def test_treasury_tick_prices():
+    assert parsers._price_num("111'240") == pytest.approx(111 + 24.0 / 32)
+    assert parsers._price_num("108'255") == pytest.approx(108 + 25.5 / 32)
+    assert parsers._price_num("6,878.75") == pytest.approx(6878.75)
 
 
 def test_futures_root_extraction():
-    for sym, root in [("/MNQZ25:XCME", "MNQ"), ("/SILH26", "SIL"),
+    for sym, root in [("/MNQZ25:XCME", "MNQ"), ("SILH26", "SIL"),
                       ("1OZJ26", "1OZ"), ("/6JH26:XCME", "6J"),
-                      ("/QGG26", "QG"), ("ES 03-25", "ES"), ("MHGH26", "MHG")]:
-        assert parsers._root(sym) == root, sym
+                      ("QGG26", "QG"), ("MHGH26", "MHG")]:
+        assert parsers._futures_root(sym) == root, sym
