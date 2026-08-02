@@ -24,7 +24,7 @@ Intro text:
    Helper text: *Export your full statement or trade history as CSV. Worried
    about what's in it? Use the redactor first — it strips your account number,
    balances, deposits and transfers in your own browser, nothing is uploaded:
-   [link to hosted redactor.html]*
+   https://thomaswfreeman-lang.github.io/edgeaudit/web/redactor.html*
 6. **Anything you already believe about your edge?** (long text, optional)
    Helper text: *e.g. "I'm best at NQ opens" or "my A+ setups carry me" — if
    you tell us before the audit, the report can test the claim directly.*
@@ -49,7 +49,7 @@ Intro text:
 
 ## Confirmation message (after submit)
 
-> Got it. You'll have the report within 48 hours. One thing now, one thing
+> Got it. You'll have the report within 48 hours — usually much sooner. One thing now, one thing
 > later: **now** — nothing in the report is advice, it's measurement.
 > **Later** — in 30–60 days I'll offer to run your *new* trades through the
 > same tests, free, so "did it get better?" gets an actual answer instead of
