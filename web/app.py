@@ -212,10 +212,9 @@ pre{{background:var(--card);border:1px solid var(--rule);padding:12px;overflow:a
     </ul>
   </div>
 
-  <h2>Prefer to run it yourself?</h2>
-  <p>Same engine, on your own machine:</p>
-  <pre>pip install -r requirements.txt
-python -m edgeaudit.cli your_export.csv -o report.html</pre>
+  <p style="font-size:14px;margin-top:28px">Rather not upload at all? The engine is open
+  source and runs on your own machine &mdash;
+  <a href="https://github.com/thomaswfreeman-lang/edgeaudit">github.com/thomaswfreeman-lang/edgeaudit</a>.</p>
 
   <p class="fine">Auto-detects Tradovate, NinjaTrader, TopstepX/ProjectX, Rithmic, Interactive
   Brokers, TradeStation and Schwab/thinkorswim, plus a fuzzy fallback. The bootstrap takes a
