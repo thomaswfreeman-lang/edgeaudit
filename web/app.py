@@ -191,10 +191,9 @@ pre{{background:var(--card);border:1px solid var(--rule);padding:12px;overflow:a
       <input type="checkbox" id="consent" name="consent" value="yes" style="margin-top:3px">
       <span>I'm supplying these trade lines so a statistical report can be produced for me.
       The report describes this sample only, is not investment advice, is not a certification
-      of my account, and does not predict future results. The redacted trade lines (never my
-      account number or balances &mdash; those are stripped in my browser) may be retained and
-      included in benchmark statistics in anonymised, aggregated form; I can withdraw this by
-      email at any time.</span></label></p>
+      of my account, and does not predict future results. The redacted trade lines may be
+      retained and included in benchmark statistics in anonymised, aggregated form; I can
+      withdraw this by email at any time.</span></label></p>
     <button id="go" type="submit" disabled>Choose a file first</button>
   </form>
 
