@@ -1,0 +1,21 @@
+EdgeAudit is dual-licensed.
+
+1. OPEN SOURCE — GNU Affero General Public License v3.0
+
+   You may use, modify and redistribute this software under the terms of the
+   AGPL-3.0. If you run a modified version to provide a network service, the
+   AGPL requires you to offer the corresponding source of your modified
+   version to the users of that service.
+
+   Full text: https://www.gnu.org/licenses/agpl-3.0.txt
+
+2. COMMERCIAL LICENSE
+
+   If you want to use this in a closed-source product or service without the
+   AGPL's reciprocity obligations, a commercial licence is available.
+   Contact: thomaswfreeman@gmail.com
+
+The statistical methods implemented here are published and in the public
+domain (Politis & Romano 1994; Benjamini & Hochberg 1995; James & Stein 1961;
+Bailey & Lopez de Prado 2012, 2014). This licence covers this implementation,
+not the mathematics.

@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trade Edge Audit</title><style>
+:root{
+  --paper:#E9EDEF; --card:#F6F8F9; --ink:#101619; --muted:#667279;
+  --verified:#0F5F52; --unproven:#A9B3B8; --adverse:#8C2F22; --rule:#C6D0D5;
+  --display:"Charter","Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --body:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+  font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.sheet{max-width:940px;margin:0 auto;padding:48px 28px 96px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--muted)}
+h1{font-family:var(--display);font-size:40px;line-height:1.1;margin:6px 0 4px;font-weight:600}
+h2{font-family:var(--display);font-size:21px;font-weight:600;margin:44px 0 6px}
+p.lede{font-size:17px;max-width:64ch;margin:10px 0 0}
+.masthead{border-bottom:2px solid var(--ink);padding-bottom:22px}
+.meta{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:14px}
+.meta span{margin-right:18px;white-space:nowrap}
+
+.verdict{margin:30px 0 6px;padding:22px 24px;background:var(--card);
+  border-left:5px solid var(--unproven)}
+.verdict.pos{border-left-color:var(--verified)}
+.verdict.neg{border-left-color:var(--adverse)}
+.verdict h3{font-family:var(--display);font-size:26px;margin:0 0 8px;font-weight:600}
+.verdict p{margin:0;max-width:70ch}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));
+  gap:1px;background:var(--rule);border:1px solid var(--rule);margin-top:24px}
+.cell{background:var(--card);padding:14px 16px}
+.cell .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted)}
+.cell .v{font-family:var(--mono);font-size:22px;margin-top:3px}
+.cell .n{font-size:12px;color:var(--muted);margin-top:2px}
+
+table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13.5px}
+th{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);text-align:left;padding:8px 10px;border-bottom:1px solid var(--ink);
+  font-weight:400}
+td{padding:9px 10px;border-bottom:1px solid var(--rule);vertical-align:middle}
+td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
+tr.ghost td{color:var(--muted)}
+.dim{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);display:block}
+
+/* interval rail */
+.rail{position:relative;height:20px;min-width:190px}
+.rail .axis{position:absolute;inset:9px 0 auto 0;height:1px;background:var(--rule)}
+.rail .zero{position:absolute;top:0;bottom:0;width:1px;background:var(--ink);opacity:.55}
+.rail .bar{position:absolute;top:6px;height:7px;border-radius:1px}
+.rail .bar.solid{background:var(--verified)}
+.rail .bar.solid.neg{background:var(--adverse)}
+.rail .bar.hollow{background:transparent;border:1px solid var(--unproven)}
+.rail .tick{position:absolute;top:2px;height:15px;width:2px;background:var(--ink)}
+.rail .tick.faint{background:var(--unproven)}
+
+.badge{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  padding:2px 6px;border:1px solid currentColor;border-radius:2px;white-space:nowrap}
+.badge.ok{color:var(--verified)}
+.badge.no{color:var(--muted)}
+.badge.bad{color:var(--adverse)}
+
+.callout{margin-top:18px;padding:18px 20px;border:1px solid var(--ink);background:transparent}
+.callout .big{font-family:var(--display);font-size:30px;line-height:1.15;margin:0 0 6px}
+.note{font-size:13px;color:var(--muted);max-width:72ch;margin-top:10px}
+ul.method{font-size:13px;color:var(--muted);max-width:74ch;padding-left:18px}
+ul.method li{margin:5px 0}
+footer{margin-top:56px;padding-top:16px;border-top:1px solid var(--rule);
+  font-family:var(--mono);font-size:11px;color:var(--muted)}
+@media (max-width:640px){
+  .sheet{padding:28px 16px 64px} h1{font-size:30px}
+  table{font-size:12.5px} .rail{min-width:120px}
+}
+@media print{body{background:#fff} .verdict,.cell{background:#fff}}
+</style></head><body>
+<div class="sheet">
+
+<header class="masthead">
+  <div class="eyebrow">Statistical trade audit</div>
+  <h1>Demo account - simulated morning edge</h1>
+  <p class="lede">Every figure below is reported with the uncertainty attached to it.
+  Slices that cannot be distinguished from chance are drawn hollow and left unclaimed.</p>
+  <div class="meta">
+    <span>600 closed trades</span><span>02 Jan 2025 – 30 Jul 2025</span>
+    <span>Source: NinjaTrader (Trade Performance)</span><span>1R basis: median absolute loss (estimated 1R)</span>
+  </div>
+</header>
+
+<div class="verdict pos">
+  <h3>Positive expectancy, established</h3>
+  <p>The 95% interval is entirely above zero (+0.158R to +0.390R) and the Sharpe claim survives skew, kurtosis and sample length. 2 of 32 slices survived correction.</p>
+</div>
+
+<div class="grid">
+  <div class="cell"><div class="k">Average trade</div><div class="v">+0.272R</div>
+    <div class="n">95% CI +0.158 to +0.390</div></div>
+  <div class="cell"><div class="k">Win rate</div><div class="v">54.0%</div>
+    <div class="n">Profit factor 1.50</div></div>
+  <div class="cell"><div class="k">Prob. Sharpe</div><div class="v">100.0%</div>
+    <div class="n">Skew/kurtosis adjusted</div></div>
+  <div class="cell"><div class="k">Deflated Sharpe</div><div class="v">0.0%</div>
+    <div class="n">After 32 slices searched</div></div>
+  <div class="cell"><div class="k">Net P&amp;L</div><div class="v">$35,281</div>
+    <div class="n">As supplied, net of fees</div></div>
+</div>
+
+<h2>Sample adequacy</h2>
+<div class="callout">
+  <p class="big">100 trades required</p>
+  <p>Your sample is long enough to support the claim being made.</p>
+  <p class="note">Minimum track record length is the sample at which a Sharpe of this size,
+  with this skew and this fat a tail, becomes distinguishable from zero at 95% confidence.
+  At your current sample the smallest average trade you could reliably detect is
+  +0.194R — anything smaller than that is invisible to you no
+  matter how carefully you journal it.</p>
+</div>
+
+<h2>Where the money supposedly comes from</h2>
+<div class="callout">
+  <p class="big">16 of 32 slices look significant.
+   2 survive.</p>
+  <p class="note">Testing 32 slices at p&lt;0.05 with no correction produces roughly
+  2 false positives by construction, before any real effect
+  exists. The count that survives Benjamini-Hochberg correction — and clears both the
+  vs-zero and vs-your-own-average tests — is the honest one.</p>
+</div>
+
+<table>
+<thead><tr><th>Slice</th><th class="num">Trades</th><th class="num">Raw R</th>
+<th class="num">Adjusted R</th><th>95% interval (zero-anchored)</th>
+<th class="num">q-value</th><th>Status</th></tr></thead>
+<tbody><tr class="">
+  <td><span class="dim">Instrument x Session</span>ES - RTH open (08:30-10:29)</td>
+  <td class="num">30</td>
+  <td class="num">+1.586</td>
+  <td class="num">+1.005</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar solid" style="left:73.34%;width:25.66%"></div><div class="tick" style="left:73.02%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.004</td>
+  <td><span class="badge ok">Verified</span></td></tr><tr class="">
+  <td><span class="dim">Session</span>RTH open (08:30-10:29)</td>
+  <td class="num">88</td>
+  <td class="num">+1.508</td>
+  <td class="num">+1.187</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar solid" style="left:76.36%;width:16.04%"></div><div class="tick" style="left:77.18%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.004</td>
+  <td><span class="badge ok">Verified</span></td></tr><tr class="ghost">
+  <td><span class="dim">Position size</span>Largest 10% (&gt;=3)</td>
+  <td class="num">198</td>
+  <td class="num">+0.534</td>
+  <td class="num">+0.501</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:57.11%;width:10.25%"></div><div class="tick faint" style="left:61.48%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.104</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Hold time</span>Shortest 25% (&lt;59 min)</td>
+  <td class="num">150</td>
+  <td class="num">+0.488</td>
+  <td class="num">+0.454</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:54.85%;width:12.89%"></div><div class="tick faint" style="left:60.40%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.344</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Trade order in day</span>First trade of day</td>
+  <td class="num">150</td>
+  <td class="num">+0.453</td>
+  <td class="num">+0.425</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:54.98%;width:10.92%"></div><div class="tick faint" style="left:59.73%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.488</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Day of week</span>Thursday</td>
+  <td class="num">120</td>
+  <td class="num">+0.450</td>
+  <td class="num">+0.410</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:53.81%;width:12.95%"></div><div class="tick faint" style="left:59.38%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.534</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Instrument x Session</span>GC - Midday (10:30-13:29)</td>
+  <td class="num">38</td>
+  <td class="num">+0.392</td>
+  <td class="num">+0.343</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:47.88%;width:21.88%"></div><div class="tick faint" style="left:57.84%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Instrument x Session</span>NQ - Overnight (18:00-02:59)</td>
+  <td class="num">37</td>
+  <td class="num">+0.351</td>
+  <td class="num">+0.324</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:47.85%;width:19.17%"></div><div class="tick faint" style="left:57.42%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">After a loss</span>Trade immediately after a loss</td>
+  <td class="num">275</td>
+  <td class="num">+0.336</td>
+  <td class="num">+0.331</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:53.43%;width:8.56%"></div><div class="tick faint" style="left:57.57%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.730</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Instrument x Session</span>CL - Afternoon (13:30-17:00)</td>
+  <td class="num">50</td>
+  <td class="num">+0.290</td>
+  <td class="num">+0.284</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:46.69%;width:20.73%"></div><div class="tick faint" style="left:56.51%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Instrument</span>GC</td>
+  <td class="num">143</td>
+  <td class="num">+0.288</td>
+  <td class="num">+0.285</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:50.76%;width:11.47%"></div><div class="tick faint" style="left:56.53%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Direction</span>Long</td>
+  <td class="num">316</td>
+  <td class="num">+0.280</td>
+  <td class="num">+0.280</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:51.97%;width:8.83%"></div><div class="tick faint" style="left:56.40%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Instrument</span>CL</td>
+  <td class="num">140</td>
+  <td class="num">+0.279</td>
+  <td class="num">+0.278</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:51.17%;width:10.53%"></div><div class="tick faint" style="left:56.36%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Instrument</span>ES</td>
+  <td class="num">156</td>
+  <td class="num">+0.266</td>
+  <td class="num">+0.267</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:51.44%;width:9.29%"></div><div class="tick faint" style="left:56.12%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Day of week</span>Monday</td>
+  <td class="num">120</td>
+  <td class="num">+0.265</td>
+  <td class="num">+0.266</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:50.09%;width:11.72%"></div><div class="tick faint" style="left:56.10%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Direction</span>Short</td>
+  <td class="num">284</td>
+  <td class="num">+0.264</td>
+  <td class="num">+0.264</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:52.48%;width:6.95%"></div><div class="tick faint" style="left:56.05%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Instrument</span>NQ</td>
+  <td class="num">161</td>
+  <td class="num">+0.259</td>
+  <td class="num">+0.261</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:50.59%;width:10.49%"></div><div class="tick faint" style="left:55.97%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Day of week</span>Friday</td>
+  <td class="num">120</td>
+  <td class="num">+0.258</td>
+  <td class="num">+0.260</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:50.12%;width:11.80%"></div><div class="tick faint" style="left:55.96%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">After a loss</span>Trade immediately after a win</td>
+  <td class="num">324</td>
+  <td class="num">+0.223</td>
+  <td class="num">+0.227</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:51.07%;width:8.19%"></div><div class="tick faint" style="left:55.19%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.775</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Day of week</span>Wednesday</td>
+  <td class="num">120</td>
+  <td class="num">+0.217</td>
+  <td class="num">+0.227</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:48.73%;width:12.69%"></div><div class="tick faint" style="left:55.20%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Trade order in day</span>4th trade of day or later</td>
+  <td class="num">150</td>
+  <td class="num">+0.210</td>
+  <td class="num">+0.220</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:48.58%;width:12.39%"></div><div class="tick faint" style="left:55.04%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.953</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Day of week</span>Tuesday</td>
+  <td class="num">120</td>
+  <td class="num">+0.172</td>
+  <td class="num">+0.189</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:47.79%;width:12.19%"></div><div class="tick faint" style="left:54.33%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.777</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Hold time</span>Longest 25% (&gt;186 min)</td>
+  <td class="num">152</td>
+  <td class="num">+0.140</td>
+  <td class="num">+0.158</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:47.23%;width:11.34%"></div><div class="tick faint" style="left:53.62%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.607</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Session</span>Afternoon (13:30-17:00)</td>
+  <td class="num">162</td>
+  <td class="num">+0.100</td>
+  <td class="num">+0.122</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:46.71%;width:11.39%"></div><div class="tick faint" style="left:52.79%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.488</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Session</span>Midday (10:30-13:29)</td>
+  <td class="num">115</td>
+  <td class="num">+0.094</td>
+  <td class="num">+0.125</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:46.45%;width:11.20%"></div><div class="tick faint" style="left:52.86%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.534</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Session</span>Overnight (18:00-02:59)</td>
+  <td class="num">125</td>
+  <td class="num">+0.089</td>
+  <td class="num">+0.122</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:47.18%;width:10.00%"></div><div class="tick faint" style="left:52.80%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.534</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Position size</span>Below median (&lt;2)</td>
+  <td class="num">200</td>
+  <td class="num">+0.061</td>
+  <td class="num">+0.084</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:46.60%;width:9.82%"></div><div class="tick faint" style="left:51.92%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.210</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Instrument x Session</span>ES - Afternoon (13:30-17:00)</td>
+  <td class="num">39</td>
+  <td class="num">+0.024</td>
+  <td class="num">+0.115</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:40.93%;width:19.01%"></div><div class="tick faint" style="left:52.64%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.692</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Instrument x Session</span>NQ - Afternoon (13:30-17:00)</td>
+  <td class="num">47</td>
+  <td class="num">-0.002</td>
+  <td class="num">+0.088</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:41.49%;width:17.58%"></div><div class="tick faint" style="left:52.01%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.607</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Instrument x Session</span>GC - London (03:00-08:29)</td>
+  <td class="num">32</td>
+  <td class="num">-0.005</td>
+  <td class="num">+0.106</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:38.51%;width:22.52%"></div><div class="tick faint" style="left:52.43%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.692</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Session</span>London (03:00-08:29)</td>
+  <td class="num">110</td>
+  <td class="num">-0.068</td>
+  <td class="num">-0.013</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:42.40%;width:12.23%"></div><div class="tick faint" style="left:49.71%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.110</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr><tr class="ghost">
+  <td><span class="dim">Instrument x Session</span>ES - Overnight (18:00-02:59)</td>
+  <td class="num">32</td>
+  <td class="num">-0.252</td>
+  <td class="num">-0.006</td>
+  <td><div class="rail"><div class="axis"></div><div class="bar hollow" style="left:32.52%;width:23.61%"></div><div class="tick faint" style="left:49.87%"></div><div class="zero" style="left:50%"></div></div></td>
+  <td class="num">0.344</td>
+  <td><span class="badge no">Not distinguishable</span></td></tr></tbody>
+</table>
+
+<p class="note"><strong>Adjusted R</strong> is the slice average pulled toward your overall average by
+an amount set by how much of the spread between slices is explainable as noise. When the spread
+between your slices is entirely noise, every adjusted figure collapses onto your overall
+average — which is the correct answer to "which setup is my best", and the one most tools
+will not give you.</p>
+
+<h2>Method</h2>
+<ul class="method">
+  <li>Intervals from a stationary block bootstrap (4,000 resamples), so streaks and
+  tilt-clusters are not mistaken for independent observations.</li>
+  <li>Each slice tested twice: against zero, and against your own overall average by label
+  permutation. A slice that only beats zero is inheriting your global edge, not adding one.</li>
+  <li>Multiplicity controlled with Benjamini-Hochberg across all 32 tested
+  slices at q=0.10. Slices below the minimum sample were excluded from the family, not
+  quietly counted.</li>
+  <li>Slice averages shrunk toward the global mean by empirical Bayes.</li>
+  <li>Sharpe figures reported as Probabilistic and Deflated Sharpe (Bailey &amp; López de Prado),
+  adjusting for skew, kurtosis, sample length and the number of slices searched.</li>
+  <li>Serial dependence check: lag-1 autocorrelation
+  -0.082,
+  runs-test z +0.49
+  — trades are not independent; intervals widened accordingly.</li>
+  <li>Session bands assume exchange local time (US futures). Timezone-free exports are read
+  as supplied.</li>
+</ul>
+
+<footer>Generated 02 Aug 2026 06:15 · Past results describe the sample supplied and
+do not establish future performance · Not investment advice</footer>
+</div></body></html>

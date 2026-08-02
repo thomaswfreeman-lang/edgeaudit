@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# real broker exports and generated client reports never enter the repo
+*_export_real*
+clients/
