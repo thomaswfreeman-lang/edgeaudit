@@ -59,7 +59,7 @@ The generator is also kinder than reality: no fees modelled beyond a flat commis
 
 The generator and the analysis are open source, seeds fixed, and there's a script that regenerates every number in this post. If the figures don't reproduce, the post is wrong and I'd like to know:
 
-`[GITHUB LINK]`
+`https://github.com/thomaswfreeman-lang/edgeaudit`
 
 Break it. I'd rather find out the method is flawed from someone here than from a customer.
 
