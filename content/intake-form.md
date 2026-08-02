@@ -1,12 +1,12 @@
 # Audit intake form
 
 **LIVE:** https://docs.google.com/forms/d/e/1FAIpQLSernORkAlZOY47Gnn3kyj4e6VHiOaIET4mUEk72IA4xvC3v9g/viewform
-(Google Form, anyone with link; responses in Thomas's Drive; exports arrive by
-email at thomaswfreeman+edgeaudit@gmail.com; redactor linked in description and
-confirmation. Consent = one required Checkboxes question with the service
-affirmation required and the benchmark grant as a separate optional tick —
-never fold the benchmark grant into the required box, forced consent kills the
-benchmark dataset.)
+(Google Form, anyone with link. Uploads land in the owner's Drive — note that
+Google requires respondents to sign in once a File upload question exists, so
+their Google identity is recorded. Contact address everywhere:
+myedgeaudit@gmail.com. Redactor linked in the description. Consent = one
+required Checkboxes question: full terms in the question description, short
+"I have read and agree" as the tick.)
 
 The draft below is the canonical copy for rebuilding or porting the form.
 
