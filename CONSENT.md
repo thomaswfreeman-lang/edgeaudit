@@ -18,7 +18,10 @@ predict future results.
 statistics (for example: what share of traders show an established edge, or
 how trades taken after a loss compare across accounts). No account numbers, no
 name, no individual trade is ever published or resold, and I can withdraw this
-by email at any time. My report is identical whether or not I tick this.
+by email at any time.
+
+*Helper text under the checkbox:* Ticking this helps refine the audit and
+improve the whole system. Your report is identical whether or not you tick it.
 
 ---
 

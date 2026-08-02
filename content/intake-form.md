@@ -1,4 +1,14 @@
-# Audit intake form — paste into Tally / Google Forms
+# Audit intake form
+
+**LIVE:** https://docs.google.com/forms/d/e/1FAIpQLSernORkAlZOY47Gnn3kyj4e6VHiOaIET4mUEk72IA4xvC3v9g/viewform
+(Google Form, anyone with link; responses in Thomas's Drive; exports arrive by
+email at thomaswfreeman+edgeaudit@gmail.com; redactor linked in description and
+confirmation. Consent = one required Checkboxes question with the service
+affirmation required and the benchmark grant as a separate optional tick —
+never fold the benchmark grant into the required box, forced consent kills the
+benchmark dataset.)
+
+The draft below is the canonical copy for rebuilding or porting the form.
 
 Title: **Free statistical trade audit — first ten**
 
@@ -44,8 +54,11 @@ Intro text:
   benchmark statistics (for example: what share of traders show an
   established edge, or how trades taken after a loss compare across
   accounts). No account numbers, no name, no individual trade is ever
-  published or resold, and I can withdraw this by email at any time. My
-  report is identical whether or not I tick this.
+  published or resold, and I can withdraw this by email at any time.
+
+  Helper text under the checkbox: *Ticking this helps refine the audit and
+  improve the whole system. Your report is identical whether or not you
+  tick it.*
 
 ## Confirmation message (after submit)
 
