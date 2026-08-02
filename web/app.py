@@ -26,16 +26,55 @@ Deploy:   uvicorn app:app --host 0.0.0.0 --port $PORT
 from __future__ import annotations
 
 import io
+import os
+import smtplib
 import sys
+import threading
 import time
 from collections import deque
+from email.message import EmailMessage
 from pathlib import Path
 
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from edgeaudit import audit, report  # noqa: E402
+
+# Where consented, redacted trade lines are forwarded so the auditor receives
+# every file (benchmark dataset + outcome log) without the app needing
+# persistent disk. All three values come from environment variables so no
+# address or credential ever appears in this public repository; when unset,
+# forwarding silently disables and the audit still runs.
+INTAKE_EMAIL = os.environ.get("INTAKE_EMAIL", "")
+GMAIL_USER = os.environ.get("GMAIL_USER", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+
+
+def _forward_to_auditor(payload: str, subject: str, verdict: str, n_trades: int) -> None:
+    """Fire-and-forget: the trader's report must never wait on SMTP."""
+    if not (INTAKE_EMAIL and GMAIL_USER and GMAIL_APP_PASSWORD):
+        return
+
+    def _send():
+        try:
+            msg = EmailMessage()
+            msg["From"] = GMAIL_USER
+            msg["To"] = INTAKE_EMAIL
+            msg["Subject"] = f"[EdgeAudit self-serve] {subject} — {verdict} ({n_trades:,} trades)"
+            msg.set_content(
+                f"Consented self-serve audit.\nLabel: {subject}\nVerdict: {verdict}\n"
+                f"Trades: {n_trades:,}\n\nRedacted payload attached (fills only; account "
+                f"number, balances and cash rows were stripped in the trader's browser).")
+            msg.add_attachment(payload.encode(), maintype="text", subtype="csv",
+                               filename="redacted_export.csv")
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as s:
+                s.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                s.send_message(msg)
+        except Exception:
+            pass  # forwarding must never break the audit itself
+
+    threading.Thread(target=_send, daemon=True).start()
 
 app = FastAPI(title="EdgeAudit — free check")
 
@@ -146,10 +185,17 @@ pre{{background:var(--card);border:1px solid var(--rule);padding:12px;overflow:a
     <input type="hidden" name="payload" id="payload">
     <div id="redact"></div>
     <div id="peek"></div>
+    <p style="font-size:13.5px;margin:16px 0 10px;max-width:62ch">
+      <label style="display:flex;gap:10px;align-items:flex-start;font-family:var(--body);
+      font-size:13.5px;letter-spacing:0;text-transform:none;color:var(--ink)">
+      <input type="checkbox" id="consent" name="consent" value="yes" style="margin-top:3px">
+      <span>I'm supplying these trade lines so a statistical report can be produced for me.
+      The report describes this sample only, is not investment advice, is not a certification
+      of my account, and does not predict future results. The redacted trade lines (never my
+      account number or balances &mdash; those are stripped in my browser) may be retained and
+      included in benchmark statistics in anonymised, aggregated form; I can withdraw this by
+      email at any time.</span></label></p>
     <button id="go" type="submit" disabled>Choose a file first</button>
-    <p style="font-size:12.5px;color:var(--muted);margin:12px 0 0">By running this you agree:
-    the report describes this sample only, is not investment advice, is not a certification
-    of your account, and does not predict future results. Nothing you upload is stored.</p>
   </form>
 
   <p style="font-size:14px;margin-top:14px">Prefer a human on the other end &mdash; plus a free
@@ -164,7 +210,9 @@ pre{{background:var(--card);border:1px solid var(--rule);padding:12px;overflow:a
           transfers, dividends, interest, and every row that isn't a trade.</li>
       <li>Sent: the fill lines only &mdash; side, quantity, instrument, price, fees.
           They cannot identify you and they do not reveal your account size.</li>
-      <li>Nothing is written to disk here. The text exists in memory for one request.</li>
+      <li>With your consent above, those redacted fill lines are retained for benchmark
+          statistics &mdash; anonymised and aggregated, never published individually,
+          withdrawable by email. The unredacted file never leaves your machine.</li>
       <li>Click <em>show me exactly what gets sent</em> above and check your network tab.
           Don't take our word for it.</li>
     </ul>
@@ -194,6 +242,15 @@ const payloadEl = document.getElementById('payload');
 const goEl = document.getElementById('go');
 const boxEl = document.getElementById('redact');
 const peekEl = document.getElementById('peek');
+const consentEl = document.getElementById('consent');
+
+function updateGo() {{
+  const haveFile = payloadEl.value.trim().length > 0;
+  if (!haveFile) {{ goEl.disabled = true; goEl.textContent = 'Choose a file first'; return; }}
+  if (!consentEl.checked) {{ goEl.disabled = true; goEl.textContent = 'Tick the consent box to run'; return; }}
+  goEl.disabled = false; goEl.textContent = 'Run the audit';
+}}
+consentEl.addEventListener('change', updateGo);
 
 function splitCsvLine(line) {{
   const out = []; let cur = '', q = false;
@@ -280,7 +337,7 @@ fileEl.addEventListener('change', () => {{
       '<a class="toggle" onclick="peekEl.style.display = peekEl.style.display===\\'block\\'?\\'none\\':\\'block\\'">' +
       'show me exactly what gets sent</a>';
     peekEl.textContent = r.text.slice(0, 4000) + (r.text.length > 4000 ? '\\n… (truncated preview)' : '');
-    goEl.disabled = false; goEl.textContent = 'Run the audit';
+    updateGo();
   }};
   rd.onerror = () => {{ goEl.textContent = 'Could not read that file'; }};
   rd.readAsText(f);
@@ -299,12 +356,15 @@ def _err(msg: str, code: int) -> HTMLResponse:
 
 
 @app.post("/audit", response_class=HTMLResponse)
-async def run_audit(request: Request, payload: str = "", subject: str = "Account",
-                    file: UploadFile | None = File(None)):
+async def run_audit(request: Request, payload: str = Form(""), subject: str = Form("Account"),
+                    consent: str = Form(""), file: UploadFile | None = File(None)):
     ip = (request.client.host if request.client else "?") or "?"
     limited = _rate_limited(ip)
     if limited:
         return _err(limited, 429)
+    if consent != "yes":
+        return _err("The consent box wasn't ticked. It's required to run the audit — "
+                    "it's also what allows the anonymised benchmark statistics.", 400)
 
     text = payload or ""
     if not text.strip() and file is not None:      # no-JS fallback
@@ -325,4 +385,6 @@ async def run_audit(request: Request, payload: str = "", subject: str = "Account
                     f'<a href="https://docs.google.com/forms/d/e/1FAIpQLSernORkAlZOY47Gnn3kyj4e6VHiOaIET4mUEk72IA4xvC3v9g/viewform">intake form</a> '
                     f"and a human will parse it within 48 hours — unusual formats are exactly "
                     f"what we want to see.", 422)
-    return HTMLResponse(report.to_html(res, subject=(subject or "Account").strip() or "Account"))
+    label = (subject or "Account").strip() or "Account"
+    _forward_to_auditor(text, label, res.verdict, res.n_trades)
+    return HTMLResponse(report.to_html(res, subject=label))
