@@ -8,6 +8,16 @@ Every other journal on the market is built to find you an edge. This one is
 built to find out whether you have one — and to say "not yet, come back in
 340 trades" when that is the true answer.
 
+**Try it without installing anything:** https://edgeaudit-freecheck.onrender.com
+— your file is redacted in your own browser before upload (account number,
+balances and cash movements never leave your machine), and you get the report
+in about two minutes. Free-tier hosting sleeps when idle, so the first load
+can take ~50s.
+
+**Want a human to look at it, plus a free re-check on your new trades in
+30–60 days?** [Intake form](https://docs.google.com/forms/d/e/1FAIpQLSernORkAlZOY47Gnn3kyj4e6VHiOaIET4mUEk72IA4xvC3v9g/viewform)
+· [Statement redactor](https://thomaswfreeman-lang.github.io/edgeaudit/web/redactor.html)
+
 ## What makes the answer defensible
 
 | Problem in every other journal | What this does |

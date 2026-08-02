@@ -1,7 +1,24 @@
 # Getting this online
 
-Nothing is hosted yet. `app.py` runs on your machine at `localhost:8000`.
-Two paths, and the second one is the one to do first.
+**LIVE:** https://edgeaudit-freecheck.onrender.com (Render free tier, Oregon,
+auto-deploys from `main`). Verified 2026-08-02 end-to-end: page renders,
+unconsented POST refused with 400, consented audit returns a full report in
+~17s, 52 glossary terms present.
+
+Free tier sleeps when idle — first request after a quiet spell takes ~50s to
+wake. $7/mo keeps it warm if Reddit traffic makes that annoying.
+
+To forward consented payloads to the intake inbox, set three env vars on the
+service (Dashboard → Environment). Unset, forwarding disables silently and
+the audit still runs:
+
+    INTAKE_EMAIL        where redacted payloads are sent
+    GMAIL_USER          the sending account
+    GMAIL_APP_PASSWORD  16-char app password (needs 2FA on that account)
+
+Never commit these. The repo is public.
+
+## The two paths below predate hosting, kept for reference
 
 ## Path A — no hosting at all (do this first)
 

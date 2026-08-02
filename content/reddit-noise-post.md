@@ -61,6 +61,12 @@ The generator and the analysis are open source, seeds fixed, and there's a scrip
 
 `https://github.com/thomaswfreeman-lang/edgeaudit`
 
+If you'd rather not install anything, there's a hosted version that redacts
+your file in your own browser before it uploads — account number, balances and
+every cash movement are stripped client-side, and you can inspect exactly what
+gets sent before you send it: `https://edgeaudit-freecheck.onrender.com`
+(free-tier host, so the first load can take ~50 seconds to wake up)
+
 Break it. I'd rather find out the method is flawed from someone here than from a customer.
 
 **Disclosure:** I built this and I'm exploring whether people would pay for it as a service. I'm not selling anything in this post and there's no signup link. If you want me to run it on your own export — free, no strings, and I'll send you the report whether or not you ever talk to me again — comment or DM. I'd like about ten real datasets to find out where it breaks on live broker files.
